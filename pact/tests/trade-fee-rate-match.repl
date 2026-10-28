@@ -1,0 +1,118 @@
+;; A match under a non-default rate.
+;; match-orders under rate changes. Bob (older) sells tok6 for tok2; Alice (newer) sells tok2 for tok6.
+(load "setup.repl")
+(env-exec-config [])
+(env-data
+  { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+(begin-tx "at 1 %: bob M = 1 tok6 for 100 tok2; alice T = 1.20 tok2 for 0.01 tok6 (120/100 units)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "M") 1.0) (PLACE (tn.key tn.BOB "M"))] }
+           { "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE (tn.esc tn.ALICE "T") 1.2) (PLACE (tn.key tn.ALICE "T"))] }])
+(create-order "M" tn.BOB (read-keyset "bob-g") n_bro.tok6 1.0 n_bro.tok2 100.0 0.05)
+(env-chain-data { "block-time": (time "2026-10-01T00:00:01Z") })
+(create-order "T" tn.ALICE (read-keyset "alice-g") n_bro.tok2 1.2 n_bro.tok6 0.01 0.05)
+(commit-tx)
+
+(begin-tx "RATE0 match: fees zero, surplus 0.20 returned, no zero-amount transfer")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.0)
+(env-keys [])
+(env-events true)
+(expect "match settles at M's price" [0.01 1.0 0.0 0.0] (let ((q (match-orders (tn.key tn.BOB "M") (tn.key tn.ALICE "T")))) [(at 'amount q) (at 'cost q) (at 'taker-fee q) (at 'maker-fee q)]))
+(expect "three transfers: 0.01 tok6 to alice, 1.00 tok2 to bob, 0.20 surplus to alice; none zero" [0.01 1.0 0.2]
+  (map (lambda (e) (at 2 (at 'params e))) (filter (lambda (e) (contains "TRANSFER" (at 'name e))) (env-events true))))
+(rollback-tx)
+
+(begin-tx "rate 0.0003 (floor 3334): M is large, T closes but M's piece (10000 units tok6, 100 units tok2) is below the floor on M's cost")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.0003)
+(env-keys [])
+(expect-failure "match refused by M's quote on the cost side" "Fill is too small: its cost is below 3334 smallest units of the buy token"
+  (match-orders (tn.key tn.BOB "M") (tn.key tn.ALICE "T")))
+;; T is not stuck: a taker closes it directly (bob takes it: eve holds no tok6, and bob is the maker of M, not of T)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB tn.ALICE 0.01) (n_bro.tok6.TRANSFER tn.BOB tn.SINK 0.000003)] }])
+(expect "T closes by a direct fill" true (at 'closes (fill-order (tn.key tn.ALICE "T") tn.BOB (read-keyset "bob-g") 1.2 0.05)))
+(rollback-tx)
+
+;; NEWER-FLOOR-FOLLOWS-RATE: an order posted at 1 % (2,000 units) closes against a newer order after
+;; the rate drops to 0.03 % (floor 3,334 units). The older order's own floor is exempt because it
+;; closes; the piece is 2,000 units for the NEWER order, which does not close — refused by ITS floor.
+(begin-tx "older order at 1 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.01)
+(env-keys [])
+(env-chain-data { "block-time": (time "2026-10-03T10:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "NF") 0.002) (PLACE (tn.key tn.BOB "NF"))] }])
+(create-order "NF" tn.BOB (read-keyset "bob-g") n_bro.tok6 0.002 n_bro.tok2 2.0 0.05)
+(commit-tx)
+(begin-tx "rate drops to 0.03 %, a big newer order arrives")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.0003)
+(env-keys [])
+(env-chain-data { "block-time": (time "2026-10-03T10:05:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE (tn.esc tn.ALICE "NT") 3000.0) (PLACE (tn.key tn.ALICE "NT"))] }])
+(create-order "NT" tn.ALICE (read-keyset "alice-g") n_bro.tok2 3000.0 n_bro.tok6 1.0 0.05)
+(env-sigs [])
+(expect-failure "NEWER-FLOOR-FOLLOWS-RATE: 2,000 units is under the 3,334-unit floor for the newer order"
+  "Match is too small: it is below 3334 smallest units for the newer order"
+  (match-orders (tn.key tn.BOB "NF") (tn.key tn.ALICE "NT")))
+(expect "control: the older order still closes by a direct fill" true
+  (at 'closes (quote (tn.key tn.BOB "NF") 0.002)))
+(commit-tx)
+
+;; MATCH-EACH-SIDE-OWN-RATE: the older order was posted at 1 %, the rate rose to 5 %, the newer order
+;; was posted at 5 %. In the match each maker pays their OWN order's rate: bob (older) 1 % of the
+;; cost, alice (newer) 5 % of the amount she receives. Then a cut to 0.5 % reaches both.
+(begin-tx "older order M2 at 1 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.01)
+(env-keys [])
+(env-chain-data { "block-time": (time "2026-10-04T10:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "M2") 1.0) (PLACE (tn.key tn.BOB "M2"))] }])
+(create-order "M2" tn.BOB (read-keyset "bob-g") n_bro.tok6 1.0 n_bro.tok2 100.0 0.05)
+(commit-tx)
+(begin-tx "rate 5 %, alice posts T2 (12 tok2 for 0.1 tok6), the match charges each side its own rate")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.05)
+(env-keys [])
+(env-chain-data { "block-time": (time "2026-10-04T10:05:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE (tn.esc tn.ALICE "T2") 12.0) (PLACE (tn.key tn.ALICE "T2"))] }])
+(create-order "T2" tn.ALICE (read-keyset "alice-g") n_bro.tok2 12.0 n_bro.tok6 0.1 0.05)
+(expect "T2 stored at 5 %, M2 at 1 %" [0.05 0.01] [(at 'fee-rate (get-order (tn.key tn.ALICE "T2"))) (at 'fee-rate (get-order (tn.key tn.BOB "M2")))])
+(env-sigs [])
+(env-events true)
+(expect "MATCH-EACH-SIDE-OWN-RATE: 0.1 tok6 for 10.00 tok2 at M2's price; bob's fee 1 % of 10.00 = 0.10; alice's fee 5 % of 0.1 = 0.005; quoted at M2's rate" [0.01 0.1 10.0 0.1 0.005 0.095 9.9]
+  (let ((q (match-orders (tn.key tn.BOB "M2") (tn.key tn.ALICE "T2")))) [(at 'rate q) (at 'amount q) (at 'cost q) (at 'maker-fee q) (at 'taker-fee q) (at 'taker-net q) (at 'maker-net q)]))
+(expect "transfers: 0.095 tok6 to alice, 0.005 tok6 fee, 9.90 tok2 to bob, 0.10 tok2 fee, 2.00 tok2 surplus back to alice; ORDER-MATCHED carries alice's 5 % fee"
+  [[0.095 0.005 9.9 0.1 2.0] [[(tn.key tn.BOB "M2") (tn.key tn.ALICE "T2") 0.1 10.0 0.005 0.1 2.0 0.0 0.0]]]
+  (let ((evs (env-events true)))
+    [(map (lambda (e) (at 2 (at 'params e))) (filter (lambda (e) (contains "TRANSFER" (at 'name e))) evs))
+     (tn.params "ORDER-MATCHED" evs)]))
+(commit-tx)
+(begin-tx "MATCH-CUT-REACHES-BOTH: rate cut to 0.5 %, a new T3 at 0.5 % matches M2 — both sides at 0.5 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.005)
+(env-keys [])
+(env-chain-data { "block-time": (time "2026-10-04T10:10:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE (tn.esc tn.ALICE "T3") 12.0) (PLACE (tn.key tn.ALICE "T3"))] }])
+(create-order "T3" tn.ALICE (read-keyset "alice-g") n_bro.tok2 12.0 n_bro.tok6 0.1 0.05)
+(env-sigs [])
+(expect "MATCH-CUT-REACHES-BOTH: bob's 1 % order pays 0.5 % of 10.00 = 0.05; alice 0.5 % of 0.1 = 0.0005" [0.005 0.05 0.0005]
+  (let ((q (match-orders (tn.key tn.BOB "M2") (tn.key tn.ALICE "T3")))) [(at 'rate q) (at 'maker-fee q) (at 'taker-fee q)]))
+(commit-tx)

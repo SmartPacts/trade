@@ -1,0 +1,12 @@
+;; Catches open-orders-for dropping its status filter: no other test has a CLOSED order of the queried pair.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "bob posts a and x (BRO for KDA) and cancels x")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "a") 1.0) (PLACE (tn.key tn.BOB "a"))
+                                 (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "x") 1.0) (PLACE (tn.key tn.BOB "x")) (CANCEL (tn.key tn.BOB "x"))] }])
+(create-order "a" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(create-order "x" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(cancel-order (tn.key tn.BOB "x") 1.0)
+(expect "OPEN-ORDERS-FOR-OPEN-ONLY: the cancelled order of the same pair is not listed" ["a"] (map (at 'id) (open-orders-for "n_bro.bro" "coin")))
+(rollback-tx)

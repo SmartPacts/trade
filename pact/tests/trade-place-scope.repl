@@ -1,0 +1,65 @@
+;; PLACE-SCOPE: the maker's consent to an order is checked INSIDE the PLACE
+;; capability's body, where only a signature given to PLACE(key) counts — a signature the maker gave
+;; to another capability in the same transaction (a token's TRANSFER, say) never opens an order.
+;; The token below calls create-order from inside its own TRANSFER; it must be refused, and no order
+;; may exist.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "a token whose transfer tries to open an order in the sender's name")
+(env-data { "eve-ns": { "keys": ["e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"], "pred": "keys-all" }, "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5", "caps": [] }])
+(define-namespace "n_eve" (read-keyset 'eve-ns) (read-keyset 'eve-ns))
+(namespace "n_eve")
+(define-keyset "n_eve.eve-ks" (read-keyset 'eve-ns))
+(module scope-probe "n_eve.eve-ks"
+  (implements fungible-v2)
+  (defschema acct balance:decimal guard:guard)
+  (deftable ledger:{acct})
+  (defschema cfg tok:module{fungible-v2})
+  (deftable self:{cfg})
+  (defun set-self (t:module{fungible-v2}) (write self "t" { "tok": t }))
+  (defcap TRANSFER:bool (sender:string receiver:string amount:decimal) @managed amount TRANSFER-mgr
+    (enforce-guard (at 'guard (read ledger sender))))
+  (defun TRANSFER-mgr:decimal (managed:decimal requested:decimal) (- managed requested))
+  (defun mint (a:string g:guard amt:decimal) (write ledger a { "balance": amt, "guard": g }))
+  (defun transfer:string (sender:string receiver:string amount:decimal)
+    (with-capability (TRANSFER sender receiver amount)
+      ;; with the sender's TRANSFER signature in scope: an order in the sender's name (refused)
+      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.create-order "squatted" sender
+        (at 'guard (read ledger sender)) (at 'tok (read self "t")) 1.0 coin 1.0 0.05)))
+  (defun transfer-create:string (sender:string receiver:string receiver-guard:guard amount:decimal)
+    ;; no authority check: credits the receiver
+    (with-default-read ledger receiver { "balance": 0.0, "guard": receiver-guard } { "balance" := b }
+      (write ledger receiver { "balance": (+ b amount), "guard": receiver-guard })) "ok")
+  (defun get-balance:decimal (account:string) (with-default-read ledger account { "balance": 0.0 } { "balance" := b } b))
+  (defun details:object{fungible-v2.account-details} (account:string)
+    (with-read ledger account { "balance" := b, "guard" := g } { "account": account, "balance": b, "guard": g }))
+  (defun precision:integer () 12)
+  (defun enforce-unit:bool (amount:decimal) true)
+  (defun create-account:string (account:string guard:guard) (insert ledger account { "balance": 0.0, "guard": guard }) "ok")
+  (defun rotate:string (account:string new-guard:guard) (format "no" []))
+  (defpact transfer-crosschain:string (sender:string receiver:string receiver-guard:guard target-chain:string amount:decimal) (step (format "x" []))))
+(create-table ledger)
+(create-table self)
+(set-self n_eve.scope-probe)
+(mint tn.ALICE (read-keyset "alice-g") 5.0)
+(commit-tx)
+
+(begin-tx "alice signs ONLY the token's TRANSFER(alice, eve, 1.0) and calls the token")
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_eve.scope-probe.TRANSFER tn.ALICE tn.EVE 1.0)] }])
+(expect-failure "PLACE-NEEDS-ITS-OWN-SIGNATURE: a signature given to another capability does not place an order"
+  "Keyset failure" (n_eve.scope-probe.transfer tn.ALICE tn.EVE 1.0))
+(rollback-tx)
+(begin-tx "nothing was created in alice's name")
+(expect-failure "no order under alice's key" "No value found in table"
+  (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.get-order (tn.key tn.ALICE "squatted")))
+(commit-tx)
+(begin-tx "control: with PLACE(key) signed as well, the same call does place the order — the check is the signature, nothing else")
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_eve.scope-probe.TRANSFER tn.ALICE tn.EVE 1.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.ALICE "squatted"))] }])
+(n_eve.scope-probe.transfer tn.ALICE tn.EVE 1.0)
+(expect "control: the order exists when PLACE was signed" [tn.ALICE "open"]
+  (let ((o (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.get-order (tn.key tn.ALICE "squatted")))) [(at 'maker o) (at 'status o)]))
+(rollback-tx)

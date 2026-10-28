@@ -1,0 +1,10 @@
+;; DEPLOY FAILS CLOSED — a fresh deploy whose trade-gov is ONE WebAuthn key under keys-all (a w: principal,
+;; unlike a single ed25519 key) is refused by the predicate rule; under keys-2 it is refused by the
+;; deploy's own enforce-keyset (see trade-deploy-one-key-keys-2.repl).
+;; One refusal per file: a failed load leaves the REPL unusable, so it is the last form.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "a fresh deploy whose trade-gov is one WebAuthn key under keys-all")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": false, "trade-gov": { "keys": ["WEBAUTHN-a50102032620012158206b0d3e9b6c1c6d3bb5d7c2b4b9d1e7e0f6d8a4c2b0e9f7d5c3a1b2c4d6e8f0a1b2c3225820d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6"], "pred": "keys-all" } })
+(env-keys ["admin-key" "WEBAUTHN-a50102032620012158206b0d3e9b6c1c6d3bb5d7c2b4b9d1e7e0f6d8a4c2b0e9f7d5c3a1b2c4d6e8f0a1b2c3225820d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6"])
+(expect-failure "a fresh deploy whose trade-gov is one WebAuthn key under keys-all" "trade-gov must be a keys-2 keyset: two different keys must sign" (load "../modules/trade.pact"))

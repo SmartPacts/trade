@@ -1,0 +1,35 @@
+;; PROBE: created-at / updated-at are stored as the block time of the action — at posting, after a
+;; match (both rows) and after a cancel. The suite asserts updated-at only after a fill.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "bob asks at t1")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "ask") 1.0) (PLACE (tn.key tn.BOB "ask"))
+                      (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "x") 1.0) (PLACE (tn.key tn.BOB "x")) (CANCEL (tn.key tn.BOB "x"))] }])
+(create-order "ask" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(create-order "x" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(expect "CREATED-AT-IS-BLOCK-TIME" [(time "2026-10-02T10:00:00Z") (time "2026-10-02T10:00:00Z")]
+  [(at 'created-at (get-order (tn.key tn.BOB "ask"))) (at 'updated-at (get-order (tn.key tn.BOB "ask")))])
+(commit-tx)
+(begin-tx "alice bids at t2")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:05:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "bid") 50.0) (PLACE (tn.key tn.ALICE "bid"))] }])
+(create-order "bid" tn.ALICE (read-keyset "alice-g") coin 50.0 n_bro.bro 0.5 0.05)
+(commit-tx)
+(begin-tx "match at t3, cancel x at t3")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:10:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(CANCEL (tn.key tn.BOB "x"))] }])
+(match-orders (tn.key tn.BOB "ask") (tn.key tn.ALICE "bid"))
+(cancel-order (tn.key tn.BOB "x") 0.0)
+(expect "UPDATED-AT-AFTER-MATCH-AND-CANCEL; CREATED-AT-UNCHANGED"
+  [(time "2026-10-02T10:10:00Z") (time "2026-10-02T10:10:00Z") (time "2026-10-02T10:10:00Z")
+   (time "2026-10-02T10:00:00Z") (time "2026-10-02T10:05:00Z")]
+  [(at 'updated-at (get-order (tn.key tn.BOB "ask"))) (at 'updated-at (get-order (tn.key tn.ALICE "bid")))
+   (at 'updated-at (get-order (tn.key tn.BOB "x")))
+   (at 'created-at (get-order (tn.key tn.BOB "ask"))) (at 'created-at (get-order (tn.key tn.ALICE "bid")))])
+(commit-tx)

@@ -1,0 +1,32 @@
+;; The maker check sits in PLACE's body, where signature scope and guard context differ — so makers of
+;; every principal kind are placed (or refused) here, not only k: accounts.
+;; A u: maker whose guard function uses with-capability is refused at PLACE with
+;; "Form illegal within defcap with-capability". Measured: the SAME refusal under an earlier shape of the code
+;; (check in the with-capability body), so placing the check in PLACE's body does not change it. A u: guard that only
+;; enforces a keyset places with PLACE(key) signed.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "u-guard module")
+(env-data { "u-ns": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" } })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [] }])
+(define-namespace "n_u" (read-keyset 'u-ns) (read-keyset 'u-ns))
+(namespace "n_u")
+(define-keyset "n_u.ks" (read-keyset 'u-ns))
+(load "fixtures/maker-user-guard.pact")
+(commit-tx)
+(begin-tx "fund both u: makers")
+(env-data { "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" } })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_bro.bro.TRANSFER tn.BOB (create-principal (n_u.ug.g-wc)) 1.0) (n_bro.bro.TRANSFER tn.BOB (create-principal (n_u.ug.g-ks)) 1.0)] }])
+(n_bro.bro.transfer-create tn.BOB (create-principal (n_u.ug.g-wc)) (n_u.ug.g-wc) 1.0)
+(n_bro.bro.transfer-create tn.BOB (create-principal (n_u.ug.g-ks)) (n_u.ug.g-ks) 1.0)
+(commit-tx)
+(begin-tx "u: maker whose guard uses with-capability")
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key (create-principal (n_u.ug.g-wc)) "u1")) (n_bro.bro.TRANSFER (create-principal (n_u.ug.g-wc)) (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.escrow-account (tn.key (create-principal (n_u.ug.g-wc)) "u1")) 1.0)] }])
+(expect-failure "USER-GUARD-WITH-CAPABILITY: refused at PLACE" "Form illegal within defcap with-capability"
+  (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.create-order "u1" (create-principal (n_u.ug.g-wc)) (n_u.ug.g-wc) n_bro.bro 1.0 coin 1.0 0.05))
+(rollback-tx)
+(begin-tx "u: maker whose guard enforces a keyset")
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key (create-principal (n_u.ug.g-ks)) "u2")) (n_bro.bro.TRANSFER (create-principal (n_u.ug.g-ks)) (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.escrow-account (tn.key (create-principal (n_u.ug.g-ks)) "u2")) 1.0)] }])
+(expect "USER-GUARD-KEYSET: places" (tn.key (create-principal (n_u.ug.g-ks)) "u2")
+  (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.create-order "u2" (create-principal (n_u.ug.g-ks)) (n_u.ug.g-ks) n_bro.bro 1.0 coin 1.0 0.05))
+(rollback-tx)

@@ -1,0 +1,28 @@
+;; PROBE: a match where exactly ONE side's fee is non-zero. The older
+;; order was posted at 0 % (maker-fee 0), the newer at 1 % (taker-fee > 0). The suite's matches have
+;; both fees zero or both positive, so gating the taker-fee transfer on maker-fee (or the reverse) would stay green there.
+(load "setup.repl")
+(env-exec-config [])
+(env-data { "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+          , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+(begin-tx "rate 0: bob posts M (older) 1 tok6 for 100 tok2")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"]) (set-fee-rate 0.0) (env-keys [])
+(env-chain-data { "block-time": (time "2026-10-02T10:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "M") 1.0) (PLACE (tn.key tn.BOB "M"))] }])
+(create-order "M" tn.BOB (read-keyset "bob-g") n_bro.tok6 1.0 n_bro.tok2 100.0 0.05)
+(commit-tx)
+(begin-tx "rate 1 %: alice posts T (newer) 1.20 tok2 for 0.01 tok6; matched")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs []) (env-keys ["trade-key" "trade-key-2"]) (set-fee-rate 0.01) (env-keys [])
+(env-chain-data { "block-time": (time "2026-10-02T10:05:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE (tn.esc tn.ALICE "T") 1.2) (PLACE (tn.key tn.ALICE "T"))] }])
+(create-order "T" tn.ALICE (read-keyset "alice-g") n_bro.tok2 1.2 n_bro.tok6 0.01 0.05)
+(env-sigs [])
+(expect "MATCH-ONE-SIDE-FEE: maker-fee 0 (M at 0 %), taker-fee 0.0001 tok6 (T at 1 %)" [0.0 0.0001]
+  (let ((q (match-orders (tn.key tn.BOB "M") (tn.key tn.ALICE "T")))) [(at 'maker-fee q) (at 'taker-fee q)]))
+(expect "the taker-side fee reached the sink and M's escrow equals its row" [0.0001 0.99 0.99]
+  [(n_bro.tok6.get-balance tn.SINK) (n_bro.tok6.get-balance (tn.esc tn.BOB "M")) (at 'sell-remaining (get-order (tn.key tn.BOB "M")))])
+(commit-tx)

@@ -1,0 +1,40 @@
+;; A taker who passes the QUOTED rate after a cut is accepted
+;; (max-rate compares with order-rate, never the stored rate — a client passes exactly the quote); and
+;; ORDER-CREATED carries the STORED rate, not the constant (indexers read this event, never FEE-RATE-SET).
+(load "setup.repl")
+(env-exec-config [])
+(env-data
+  { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+(begin-tx "bob posts at 1 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "P") 3.0) (PLACE (tn.key tn.BOB "P"))] }])
+(create-order "P" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.01)
+(commit-tx)
+(begin-tx "cut to 0.5 %")
+(env-keys ["trade-key" "trade-key-2"])
+(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.set-fee-rate 0.005)
+(env-keys [])
+(commit-tx)
+(begin-tx "TAKER-AT-CUT-RATE: alice fills with max-rate = the quoted 0.005")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(let ((q (quote (tn.key tn.BOB "P") 1.0)))
+  (env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+             , "caps": [(coin.TRANSFER tn.ALICE tn.BOB (at 'maker-net q)) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING (at 'maker-fee q))] }]))
+(expect "TAKER-AT-CUT-RATE: accepted at 0.5 %" [0.005 0.5 0.005]
+  (let ((q (fill-order (tn.key tn.BOB "P") tn.ALICE (read-keyset "alice-g") 1.0 0.005))) [(at 'rate q) (at 'maker-fee q) (at 'taker-fee q)]))
+(commit-tx)
+
+(begin-tx "rate 2 %, bob posts")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.02)
+(env-keys [])
+(env-events true)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "E") 3.0) (PLACE (tn.key tn.BOB "E"))] }])
+(create-order "E" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.02)
+(expect "ORDER-CREATED-CARRIES-STORED-RATE" [[(tn.key tn.BOB "E") tn.BOB "E" "n_bro.bro" 3.0 "coin" 300.0 0.02]]
+  (tn.params "ORDER-CREATED" (env-events true)))
+(commit-tx)

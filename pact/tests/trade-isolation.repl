@@ -1,0 +1,188 @@
+;; The invariants the design rests on, each pinned so that it goes RED if the mechanism is removed:
+;;   1. one escrow principal per order; the capability of order A cannot spend order B's escrow
+;;   2. ESCROW cannot be acquired from outside the module; for a closed order only under the maker's CANCEL
+;;   3. the deposit is measured as a difference: short-crediting and no-op tokens are refused,
+;;      dust sent to the escrow beforehand changes nothing
+;;   4. a module without (implements fungible-v2) is refused by the type
+;;   5. the MAKER is authenticated by the contract: nobody can place an order in another account's
+;;      name, even with a token that ignores signatures
+;;   6. only the maker cancels; an id is single-use per maker; another maker may reuse the same id
+;;   7. the pre-5.3 read regime does not break the let-bound reads
+(load "setup.repl")
+(env-exec-config [])
+
+;; ---- two KDA-selling orders, two escrow principals -------------------------------------------
+(begin-tx "bob opens A and B, selling KDA for BRO")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(coin.TRANSFER tn.BOB (tn.esc tn.BOB "A") 500.0) (coin.TRANSFER tn.BOB (tn.esc tn.BOB "B") 500.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "A"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "B"))] }])
+(create-order "A" tn.BOB (read-keyset "bob-g") coin 500.0 n_bro.bro 5.0 0.05)
+(create-order "B" tn.BOB (read-keyset "bob-g") coin 500.0 n_bro.bro 5.0 0.05)
+(expect "distinct escrow principals" true (!= (tn.esc tn.BOB "A") (tn.esc tn.BOB "B")))
+(expect "A and B hold 500 each" [500.0 500.0] [(coin.get-balance (tn.esc tn.BOB "A")) (coin.get-balance (tn.esc tn.BOB "B"))])
+(commit-tx)
+
+;; ---- 1. the capability of order B does not reach order A's escrow -----------------------------
+(begin-tx "wrong order's capability")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(test-capability (ESCROW (tn.key tn.BOB "B")))
+(install-capability (coin.TRANSFER (tn.esc tn.BOB "A") tn.EVE 500.0))
+(expect-failure "ESCROW B cannot spend A's escrow" "Capability not acquired"
+  (coin.transfer (tn.esc tn.BOB "A") tn.EVE 500.0))
+(rollback-tx)
+(begin-tx "right order's capability (control: the test above is sensitive)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(test-capability (ESCROW (tn.key tn.BOB "A")))
+(install-capability (coin.TRANSFER (tn.esc tn.BOB "A") tn.EVE 500.0))
+(coin.transfer (tn.esc tn.BOB "A") tn.EVE 500.0)
+(expect "A spent only under its own capability" 0.0 (coin.get-balance (tn.esc tn.BOB "A")))
+(rollback-tx)
+(begin-tx "no capability at all")
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5", "caps": [(coin.TRANSFER (tn.esc tn.BOB "A") tn.EVE 1.0)] }])
+(expect-failure "a signature cannot spend an escrow" "Capability not acquired"
+  (coin.transfer (tn.esc tn.BOB "A") tn.EVE 1.0))
+(rollback-tx)
+
+;; ---- the release helpers cannot be driven directly ---------------------------------------------
+(begin-tx "direct helper calls")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [])
+(expect-failure "escrow-release from outside" "not granted"
+  (escrow-release (tn.key tn.BOB "A") coin tn.EVE (read-keyset "eve-g") 1.0))
+(expect-failure "escrow-fee from outside" "not granted"
+  (escrow-fee (tn.key tn.BOB "A") coin "coin" 1.0))
+(rollback-tx)
+
+;; ---- 2. ESCROW from outside, and for a closed order ---------------------------------------------
+(begin-tx "outside the module")
+(env-sigs [])
+(expect-failure "with-capability from the top level" "Module admin necessary"
+  (with-capability (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.ESCROW (tn.key tn.BOB "A")) true))
+(rollback-tx)
+(begin-tx "another module composing ESCROW")
+(env-keys ["admin-key"])
+(namespace "n_bro")
+(module composer G
+  (defcap G () (enforce false "fixture"))
+  (defcap WRAP (key:string) (compose-capability (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.ESCROW key)))
+  (defun try-it (key:string) (with-capability (WRAP key) true)))
+(expect-failure "composing ESCROW from another module is refused" "Module admin"
+  (n_bro.composer.try-it (tn.key tn.BOB "A")))
+(commit-tx)
+(env-keys [])
+(begin-tx "B is cancelled with nothing refunded yet")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.BOB "B"))] }])
+(expect "cancel with amount 0 just closes the order" 500.0 (cancel-order (tn.key tn.BOB "B") 0.0))
+(commit-tx)
+(begin-tx "a cancelled order's escrow: every public path to it needs the maker")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5", "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.BOB "B"))] }])
+(expect-failure "a stranger's cancel" "Keyset failure" (cancel-order (tn.key tn.BOB "B") 500.0))
+(expect-failure "a direct release" "require-capability: not granted"
+  (escrow-release (tn.key tn.BOB "B") coin tn.EVE (read-keyset "eve-g") 500.0))
+(expect-failure "a fill" "Order is not open" (quote (tn.key tn.BOB "B") 100.0))
+(expect-failure "ESCROW from outside the module" "Module admin"
+  (with-capability (ESCROW (tn.key tn.BOB "B")) true))
+(env-sigs [])
+(expect-failure "unknown order" "No value found"
+  (test-capability (ESCROW "nope")))
+(rollback-tx)
+
+;; ---- 3. the deposit is measured, as a difference -----------------------------------------------
+(begin-tx "short-credit token refused")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.short-credit.TRANSFER tn.BOB (tn.esc tn.BOB "S") 10.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "S"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "N"))] }])
+(expect-failure "credits 99% (the message names the SELL amount: the buy amount differs on purpose)" "Escrow received 9.9 of 10.0"
+  (create-order "S" tn.BOB (read-keyset "bob-g") n_bro.short-credit 10.0 coin 20.0 0.05))
+(expect-failure "moves nothing" "Escrow received 0.0 of 10.0"
+  (create-order "N" tn.BOB (read-keyset "bob-g") n_bro.no-op 10.0 coin 10.0 0.05))
+(rollback-tx)
+(begin-tx "dust sent to the future escrow does not block the order, and comes back with the refund")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5", "caps": [(coin.TRANSFER tn.EVE (tn.esc tn.BOB "D") 0.000000000001)] }])
+(coin.transfer-create tn.EVE (tn.esc tn.BOB "D") (escrow-guard (tn.key tn.BOB "D")) 0.000000000001)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(coin.TRANSFER tn.BOB (tn.esc tn.BOB "D") 50.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "D"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.BOB "D"))] }])
+(expect "the order is created despite the dust" (tn.key tn.BOB "D")
+  (create-order "D" tn.BOB (read-keyset "bob-g") coin 50.0 n_bro.bro 0.5 0.05))
+(expect "escrow holds the deposit plus the dust" 50.000000000001 (coin.get-balance (tn.esc tn.BOB "D")))
+(expect "the maker's refund may include the dust" 0.0 (cancel-order (tn.key tn.BOB "D") 50.000000000001))
+(rollback-tx)
+
+;; ---- 4. declaration is checked by the type ----------------------------------------------------
+(begin-tx "lookalike refused")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(expect-failure "no implements, sell side" "expected type module{fungible-v2}"
+  (create-order "L" tn.BOB (read-keyset "bob-g") n_bro.lookalike 10.0 coin 10.0 0.05))
+(expect-failure "no implements, buy side" "expected type module{fungible-v2}"
+  (create-order "L" tn.BOB (read-keyset "bob-g") coin 10.0 n_bro.lookalike 10.0 0.05))
+(rollback-tx)
+
+;; ---- 5. the maker is authenticated by the contract, whatever the token does --------------------
+(begin-tx "eve places an order in bob's name with a token that needs no signature")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+           , "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "X"))] }])
+(expect-failure "bob's guard did not sign" "Keyset failure"
+  (create-order "X" tn.BOB (read-keyset "bob-g") n_bro.no-op 10.0 coin 10.0 0.05))
+(expect-failure "naming bob but passing eve's guard is not a principal match"
+  "must be a principal account matching its guard"
+  (create-order "X" tn.BOB (read-keyset "eve-g") n_bro.no-op 10.0 coin 10.0 0.05))
+(rollback-tx)
+(begin-tx "bob signs the transfer but not PLACE: refused")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(coin.TRANSFER tn.BOB (tn.esc tn.BOB "X") 10.0)] }])
+(expect-failure "a signature scoped only to the token transfer does not place an order" "Keyset failure"
+  (create-order "X" tn.BOB (read-keyset "bob-g") coin 10.0 n_bro.bro 0.1 0.05))
+(rollback-tx)
+
+;; ---- 6. only the maker cancels; ids are single-use per maker ------------------------------------
+(begin-tx "eve cannot cancel A")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5", "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.BOB "A"))] }])
+(expect-failure "stranger" "Keyset failure" (cancel-order (tn.key tn.BOB "A") 500.0))
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(coin.TRANSFER tn.BOB tn.EVE 1.0)] }])
+(expect-failure "maker signed for something else" "Keyset failure" (cancel-order (tn.key tn.BOB "A") 500.0))
+(env-sigs [])
+(expect-failure "unsigned" "Keyset failure" (cancel-order (tn.key tn.BOB "A") 500.0))
+(rollback-tx)
+(begin-tx "id reuse")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(coin.TRANSFER tn.BOB (tn.esc tn.BOB "A") 1.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "A"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "B"))] }])
+(expect-failure "bob's A exists" "Value already found while in Insert mode"
+  (create-order "A" tn.BOB (read-keyset "bob-g") coin 1.0 n_bro.bro 1.0 0.05))
+(expect-failure "bob's B exists even though cancelled" "Value already found while in Insert mode"
+  (create-order "B" tn.BOB (read-keyset "bob-g") coin 1.0 n_bro.bro 1.0 0.05))
+(rollback-tx)
+(begin-tx "alice may use the id A: the key is hers")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "A") 10.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.ALICE "A"))] }])
+(expect "same id, another maker" (tn.key tn.ALICE "A")
+  (create-order "A" tn.ALICE (read-keyset "alice-g") coin 10.0 n_bro.bro 0.1 0.05))
+(rollback-tx)
+
+;; ---- 7. the pre-5.3 read regime ---------------------------------------------------------------
+(begin-tx "DisablePact53")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-exec-config ["DisablePact53"])
+(expect "quote still works" 1.0 (at 'cost (quote (tn.key tn.BOB "A") 100.0)))
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.bro.TRANSFER tn.ALICE tn.BOB 0.99) (n_bro.bro.TRANSFER tn.ALICE tn.SINK 0.01)] }])
+(fill-order (tn.key tn.BOB "A") tn.ALICE (read-keyset "alice-g") 100.0 0.05)
+(expect "fill settled under the old regime" 400.0 (at 'sell-remaining (get-order (tn.key tn.BOB "A"))))
+(env-exec-config [])
+(commit-tx)

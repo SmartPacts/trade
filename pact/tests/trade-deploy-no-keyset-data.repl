@@ -1,0 +1,8 @@
+;; DEPLOY FAILS CLOSED — a fresh deploy that forgot the trade-gov keyset
+;; One refusal per file: a failed load leaves the REPL unusable, so it is the last form.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "a fresh deploy that forgot the trade-gov keyset")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": false })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(expect-failure "a fresh deploy that forgot the trade-gov keyset" "read-keyset failure" (load "../modules/trade.pact"))

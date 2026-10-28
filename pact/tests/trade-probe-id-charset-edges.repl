@@ -1,0 +1,11 @@
+;; Probe: an id using the first and last character of every allowed class is accepted.
+;; No other suite id contains 'z' (or 'Z'), so this is the test that goes red if either is dropped from ID-CHARS.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "id azAZ09-_")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "azAZ09-_") 1.0) (PLACE (tn.key tn.BOB "azAZ09-_"))] }])
+(expect "ID-CHARSET-EDGES-ACCEPTED" (tn.key tn.BOB "azAZ09-_")
+  (create-order "azAZ09-_" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05))
+(rollback-tx)

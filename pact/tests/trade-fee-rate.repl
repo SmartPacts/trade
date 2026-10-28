@@ -1,0 +1,89 @@
+;; The fee rate is a governance setting: 1 % at first deploy, changed by
+;; set-fee-rate within MAX-FEE-RATE, by the governance keys only — and still after a freeze
+;; (trade-frozen.repl FROZEN-KEEPS-FEE-ADMIN). The smallest tradeable piece follows the rate so that
+;; its fee is always at least one unit.
+(load "setup.repl")
+(env-exec-config [])
+
+(begin-tx "FEE-RATE-DEFAULT: 1 % and a 100-unit floor before anyone sets anything")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(expect "fee-rate" 0.01 (fee-rate))
+(expect "min-units at 1 %" 100.0 (min-units 0.01))
+(expect "min-units at 2 %" 50.0 (min-units 0.02))
+(expect "min-units at 0.3 %" 334.0 (min-units 0.003))
+(expect "min-units with no fee" 1.0 (min-units 0.0))
+(commit-tx)
+
+(begin-tx "FEE-RATE-NEEDS-GOVERNANCE")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys [])
+(expect-failure "nobody signed" "Keyset failure" (set-fee-rate 0.02))
+(env-keys ["admin-key"])
+(expect-failure "the SPT keys alone are not trade-gov" "Keyset failure" (set-fee-rate 0.02))
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [] }])
+(expect-failure "a maker cannot" "Keyset failure" (set-fee-rate 0.0))
+(rollback-tx)
+
+(begin-tx "FEE-RATE-BOUNDED")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(expect-failure "above the cap" "Fee rate must be between 0 and 0.05" (set-fee-rate 0.0501))
+(expect-failure "negative" "Fee rate must be between 0 and 0.05" (set-fee-rate -0.01))
+(expect-failure "five decimals" "Fee rate may have at most four decimals" (set-fee-rate 0.00001))
+(expect "exactly the cap is allowed" "fee rate 0.05" (set-fee-rate 0.05))
+(expect "zero is allowed" "fee rate 0.0" (set-fee-rate 0.0))
+(rollback-tx)
+
+(begin-tx "bob's order at 1 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "r") 3.0) (PLACE (tn.key tn.BOB "r"))] }])
+(create-order "r" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05)
+(expect "1 BRO costs 100 KDA: fee 1 KDA and 0.01 BRO" [1.0 0.01] (let ((q (quote (tn.key tn.BOB "r") 1.0))) [(at 'maker-fee q) (at 'taker-fee q)]))
+(commit-tx)
+
+(begin-tx "RATE-RISE-NEVER-REACHES-RESTING-ORDER: governance sets 2 %, bob's order still pays 1 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(env-events true)
+(set-fee-rate 0.02)
+(expect "FEE-RATE-SET event" [[0.02]] (tn.params "FEE-RATE-SET" (env-events true)))
+(expect "fee-rate reads 2 %" 0.02 (fee-rate))
+(env-keys [])
+(expect "the order stores the rate it was posted at" 0.01 (at 'fee-rate (get-order (tn.key tn.BOB "r"))))
+(expect "RATE-RISE-NEVER-REACHES-RESTING-ORDER: the same fill still pays 1 KDA and 0.01 BRO, quoted at 1 %" [0.01 1.0 0.01]
+  (let ((q (quote (tn.key tn.BOB "r") 1.0))) [(at 'rate q) (at 'maker-fee q) (at 'taker-fee q)]))
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 99.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 1.0)] }])
+(fill-order (tn.key tn.BOB "r") tn.ALICE (read-keyset "alice-g") 1.0 0.05)
+(expect "SPT funding received 1 KDA, the fee account 0.01 BRO" [1.0 0.01] [(coin.get-balance tn.SPT-FUNDING) (n_bro.bro.get-balance tn.SINK)])
+;; the floor follows the ORDER's rate: a 60-unit piece is under the 100-unit floor of a 1 % order
+(expect-failure "a 60-unit piece of the 1 % order is refused" "Fill is too small: it is below 100 smallest units of the sell token" (quote (tn.key tn.BOB "r") 0.00000000006))
+(commit-tx)
+
+(begin-tx "NEW-ORDER-PAYS-RATE-IN-FORCE: an order posted at 2 % pays 2 %, and its floor is 50 units")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "r2") 1.0) (PLACE (tn.key tn.BOB "r2"))] }])
+(create-order "r2" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(expect "stored at 2 %" 0.02 (at 'fee-rate (get-order (tn.key tn.BOB "r2"))))
+(expect "NEW-ORDER-PAYS-RATE-IN-FORCE: 0.5 BRO for 50 KDA pays 1 KDA and 0.01 BRO" [0.02 1.0 0.01]
+  (let ((q (quote (tn.key tn.BOB "r2") 0.5))) [(at 'rate q) (at 'maker-fee q) (at 'taker-fee q)]))
+(expect "FLOOR-FOLLOWS-RATE: a 60-unit piece is accepted at 2 %" 0.000000000001 (at 'taker-fee (quote (tn.key tn.BOB "r2") 0.00000000006)))
+(expect-failure "a 49-unit piece is not" "Fill is too small: it is below 50 smallest units of the sell token" (quote (tn.key tn.BOB "r2") 0.000000000049))
+(commit-tx)
+
+(begin-tx "FEE-RATE-ZERO / RATE-CUT-REACHES-RESTING-ORDER: no fee, no fee transfers, every piece down to one unit")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.0)
+(env-keys [])
+(expect "RATE-CUT-REACHES-RESTING-ORDER: the 1 % order and the 2 % order both quote at 0" [0.0 0.0 0.0 0.0 0.0]
+  (let ((q (quote (tn.key tn.BOB "r") 1.0)) (q2 (quote (tn.key tn.BOB "r2") 0.5))) [(at 'rate q) (at 'maker-fee q) (at 'taker-fee q) (at 'rate q2) (at 'maker-fee q2)]))
+(expect "the stored rate is untouched by the cut" 0.01 (at 'fee-rate (get-order (tn.key tn.BOB "r"))))
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 100.0)] }])
+(fill-order (tn.key tn.BOB "r") tn.ALICE (read-keyset "alice-g") 1.0 0.05)
+(expect "bob got all 100 KDA of this fill; SPT funding unchanged" [10199.0 1.0] [(coin.get-balance tn.BOB) (coin.get-balance tn.SPT-FUNDING)])
+(expect "a one-unit piece quotes" 0.000000000001 (at 'amount (quote (tn.key tn.BOB "r") 0.000000000001)))
+(commit-tx)

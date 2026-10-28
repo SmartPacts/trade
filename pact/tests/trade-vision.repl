@@ -1,0 +1,55 @@
+;; VISION PROPERTIES, each under a name that goes red if it stops being true:
+;; orders never expire; any fungible-v2 token trades with no listing; one key of three cannot govern.
+;; Also the precision gaps: a fill paid in an 18-decimal token, cancels at 2 and at 18 decimals.
+(load "setup.repl")
+(env-exec-config [])
+(env-data
+  { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+
+(begin-tx "bob posts X (10.00 tok2 for 3.000000000000000003 tok18) and Y (1.000000000000000007 tok18 for 5.00 tok2)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-03T00:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok2.TRANSFER tn.BOB (tn.esc tn.BOB "X") 10.0) (PLACE (tn.key tn.BOB "X"))
+                      (n_bro.tok18.TRANSFER tn.BOB (tn.esc tn.BOB "Y") 1.000000000000000007) (PLACE (tn.key tn.BOB "Y"))] }])
+(expect "ANY-FUNGIBLE-V2-NO-WHITELIST: two tokens the contract has never heard of are posted with no listing step" [(tn.key tn.BOB "X") (tn.key tn.BOB "Y")]
+  [(create-order "X" tn.BOB (read-keyset "bob-g") n_bro.tok2 10.0 n_bro.tok18 3.000000000000000003 0.01)
+   (create-order "Y" tn.BOB (read-keyset "bob-g") n_bro.tok18 1.000000000000000007 n_bro.tok2 5.0 0.01)])
+(commit-tx)
+
+(begin-tx "ORDERS-NEVER-EXPIRE: twenty years later the order is still open and fills at its posted terms")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2046-10-03T00:00:00Z") })
+(expect "ORDERS-NEVER-EXPIRE: still open, nothing changed" ["open" 10.0 3.000000000000000003]
+  (let ((o (get-order (tn.key tn.BOB "X")))) [(at 'status o) (at 'sell-remaining o) (at 'buy-remaining o)]))
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok18.TRANSFER tn.ALICE tn.BOB 0.989010000000000001) (n_bro.tok18.TRANSFER tn.ALICE tn.SINK 0.00999)] }])
+(expect "FILL-PAID-IN-18-DECIMALS: 3.33 tok2 costs ceiling(3.33 × 3.000000000000000003 / 10, 18); fee floor(cost × 1 %, 18); taker fee floor(3.33 × 1 %, 2)"
+  [0.999000000000000001 0.00999 0.989010000000000001 0.03 3.3 6.67 2.001000000000000002]
+  (let ((q (fill-order (tn.key tn.BOB "X") tn.ALICE (read-keyset "alice-g") 3.33 0.01)))
+    [(at 'cost q) (at 'maker-fee q) (at 'maker-net q) (at 'taker-fee q) (at 'taker-net q) (at 'sell-remaining q) (at 'buy-remaining q)]))
+(commit-tx)
+
+(begin-tx "CANCEL-AT-2-AND-18-DECIMALS: twenty years on, both orders refund exactly what is left")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(CANCEL (tn.key tn.BOB "X")) (CANCEL (tn.key tn.BOB "Y"))] }])
+(let ((b2 (n_bro.tok2.get-balance tn.BOB)) (b18 (n_bro.tok18.get-balance tn.BOB)))
+  (expect "CANCEL-AT-2-AND-18-DECIMALS: nothing left unrefunded" [0.0 0.0]
+    [(cancel-order (tn.key tn.BOB "X") 6.67) (cancel-order (tn.key tn.BOB "Y") 1.000000000000000007)])
+  (expect "bob got 6.67 tok2 and 1.000000000000000007 tok18 back; both escrows empty" [6.67 1.000000000000000007 0.0 0.0]
+    [(- (n_bro.tok2.get-balance tn.BOB) b2) (- (n_bro.tok18.get-balance tn.BOB) b18)
+     (n_bro.tok2.get-balance (tn.esc tn.BOB "X")) (n_bro.tok18.get-balance (tn.esc tn.BOB "Y"))]))
+(commit-tx)
+
+(begin-tx "ONE-KEY-OF-THREE-CANNOT-GOVERN: the fee setting needs two of the three governance keys")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [])
+(env-keys ["trade-key"])
+(expect-failure "ONE-KEY-OF-THREE-CANNOT-GOVERN (first key alone)" "Keyset failure" (set-fee-rate 0.02))
+(env-keys ["trade-key-3"])
+(expect-failure "ONE-KEY-OF-THREE-CANNOT-GOVERN (third key alone)" "Keyset failure" (set-fee-rate 0.02))
+(env-keys ["trade-key-2" "trade-key-3"])
+(expect "any two of the three can" "fee rate 0.02" (set-fee-rate 0.02))
+(rollback-tx)

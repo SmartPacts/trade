@@ -1,0 +1,88 @@
+name: ci
+
+# ===========================================================================
+# EVERYTHING THIS REPOSITORY CLAIMS, RUN ON EVERY PUSH.
+#
+# The `ci` job runs exactly what you run locally: pact/tests/run-tests.sh,
+# unchanged, plus the publication-hygiene check and the examples' type check
+# and doc-snippet check. It reaches no network other than the pinned engine
+# download and the npm registry. There is no deploy step, no key and no
+# secret: it cannot publish or sign anything. The `onchain` job is read-only,
+# separate, and does not gate a push.
+#
+# Both jobs run only while the repository is public.
+# ===========================================================================
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # GitHub disables scheduled workflows in a public repository after 60 days
+  # without activity; re-enable it or run it by workflow_dispatch.
+  schedule:
+    - cron: '41 6 * * 1'        # the on-chain comparison, weekly
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # PINNED BY CONTENT, NOT BY TAG. Re-pin only when deliberately moving engine
+  # version, and re-measure BOTH values.
+  PACT_URL: https://github.com/kda-community/pact-5/releases/download/5.4.1/pact-5.4.1-72f4-ubuntu-24.04.tar.gz
+  PACT_TARBALL_SHA256: a5bd0f955a085086bab7a4c07bdc85064c61b87147a28ad9e2e2515aea0b5cc1
+  PACT_BINARY_SHA256: eecfb90e76ac154ae520fba2fbf8a2a14f2dcb14b0f5a962cb5fdfc7ad38447b
+
+jobs:
+  ci:
+    if: github.event_name != 'schedule' && !github.event.repository.private
+    # 24.04 is not cosmetic: the pinned tarball is the ubuntu-24.04 build.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Install Pact 5.4.1 (content-pinned)
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o pact.tar.gz "$PACT_URL"
+          echo "${PACT_TARBALL_SHA256}  pact.tar.gz" | sha256sum -c -
+          mkdir -p pact-dist && tar xzf pact.tar.gz -C pact-dist
+          echo "${PACT_BINARY_SHA256}  pact-dist/pact" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin" && install -m755 pact-dist/pact "$HOME/.local/bin/pact"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Engine identity
+        run: |
+          set -euo pipefail
+          command -v pact
+          pact --version
+          python3 --version
+
+      # The static gate, the fixture checks, the top-level-form pin and all 72
+      # suites — the same script a reader runs.
+      - name: Full suite and gates
+        run: pact/tests/run-tests.sh
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: '24'
+
+      - name: Examples type-check, and every code block in INTEGRATION.md is in examples/src
+        working-directory: examples
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run check-docs
+
+  # Is mainnet still running this code? Read-only, unsigned, free.
+  onchain:
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: All 20 chains run pact/modules/trade.pact, character for character
+        run: python3 .github/scripts/verify-onchain.py

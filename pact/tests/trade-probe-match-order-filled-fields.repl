@@ -1,0 +1,25 @@
+;; Probe: ORDER-FILLED emitted by a match, with every field distinct. The suite's only
+;; check of that event (trade-match.repl:39) has maker-fee = sell-remaining = 0.5, so swapping those two
+;; arguments stays green.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "bob asks 2 BRO for 200 KDA")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "ask") 2.0) (PLACE (tn.key tn.BOB "ask"))] }])
+(create-order "ask" tn.BOB (read-keyset "bob-g") n_bro.bro 2.0 coin 200.0 0.05)
+(commit-tx)
+(begin-tx "alice bids 50 KDA for 0.5 BRO; a stranger matches")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:05:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "bid") 50.0) (PLACE (tn.key tn.ALICE "bid"))] }])
+(create-order "bid" tn.ALICE (read-keyset "alice-g") coin 50.0 n_bro.bro 0.5 0.05)
+(env-sigs [])
+(env-events true)
+(match-orders (tn.key tn.BOB "ask") (tn.key tn.ALICE "bid"))
+(expect "MATCH-ORDER-FILLED-FIELDS: key, taker, amount, cost, taker-fee, maker-fee, sell-remaining, buy-remaining"
+  [[(tn.key tn.BOB "ask") tn.ALICE 0.5 50.0 0.005 0.5 1.5 150.0]]
+  (tn.params "ORDER-FILLED" (env-events true)))
+(commit-tx)

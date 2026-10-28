@@ -1,0 +1,23 @@
+;; PROBE: the row's as-posted sell-amount / buy-amount are never asserted
+;; by the suite (only the *-remaining fields are), and the short-credit refusal uses sell = buy = 10.0,
+;; so a message naming the wrong amount stays green.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "posted amounts stay as posted through a fill")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "o1") 3.0) (PLACE (tn.key tn.BOB "o1"))] }])
+(create-order "o1" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 99.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 1.0)] }])
+(fill-order (tn.key tn.BOB "o1") tn.ALICE (read-keyset "alice-g") 1.0 0.05)
+(expect "POSTED-AMOUNTS-PINNED" [3.0 300.0 2.0 200.0]
+  (let ((o (get-order (tn.key tn.BOB "o1")))) [(at 'sell-amount o) (at 'buy-amount o) (at 'sell-remaining o) (at 'buy-remaining o)]))
+(commit-tx)
+(begin-tx "short-credit with sell != buy")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.short-credit.TRANSFER tn.BOB (tn.esc tn.BOB "S") 10.0) (PLACE (tn.key tn.BOB "S"))] }])
+(expect-failure "DEPOSIT-MESSAGE-NAMES-THE-SELL-AMOUNT" "Escrow received 9.9 of 10.0"
+  (create-order "S" tn.BOB (read-keyset "bob-g") n_bro.short-credit 10.0 coin 20.0 0.05))
+(rollback-tx)

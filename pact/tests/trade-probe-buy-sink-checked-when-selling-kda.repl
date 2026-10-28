@@ -1,0 +1,17 @@
+;; Probe: the BUY token's fee sink is checked by the buy token's own name. The rest of the suite
+;; only squats the buy-side sink with a non-KDA sell token, so a check passing sell-name (= "coin" here,
+;; which skips the check) would stay green there; this test goes red.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "eve squats the r: sink in short-credit")
+(env-data { "eve": { "keys": ["e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"], "pred": "keys-all" }
+          , "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" } })
+(n_bro.short-credit.create-account tn.SINK (read-keyset "eve"))
+(commit-tx)
+(begin-tx "bob sells KDA for short-credit")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(coin.TRANSFER tn.BOB (tn.esc tn.BOB "K") 10.0) (PLACE (tn.key tn.BOB "K"))] }])
+(expect-failure "BUY-SINK-CHECKED-WHEN-SELLING-KDA" "Fee sink account exists with a foreign guard"
+  (create-order "K" tn.BOB (read-keyset "bob-g") coin 10.0 n_bro.short-credit 10.0 0.05))
+(rollback-tx)

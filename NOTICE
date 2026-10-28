@@ -1,0 +1,26 @@
+Smart Pacts Trade
+Copyright 2026 Smart Pacts
+
+LICENCE. From the first commit of this repository onward it is licensed under the PolyForm
+Strict License 1.0.0 — see LICENSE. You may read it, run it and verify it against the chain for
+any noncommercial purpose. You may not distribute it, change it, or deploy or use it commercially
+without written permission from Smart Pacts.
+
+This product includes software developed at Smart Pacts.
+
+VENDORED. Under pact/tests/fixtures/ are copies of code the contract depends on, kept only so
+the test suite can load the dependencies the contract compiles against:
+
+  * coin.pact, fungible-v2.pact, fungible-xchain-v1.pact, gas-payer-v1.pact — Kadena's coin
+    contract (a test copy of it) and interfaces. Not ours: Kadena's, under its BSD-3-Clause
+    licence (github.com/kadena-io/chainweb-node, LICENSE). bro.pact, tok2.pact, tok6.pact and
+    tok18.pact are generated from that coin copy by make-token.py, renamed and re-precisioned
+    for testing.
+  * SPT.pact — the Smart Pacts Token as deployed on Kadena mainnet01 (ours), which trade calls
+    for KDA fees.
+
+They are not part of the deployed artifact. On chain the contract resolves the real `coin` and
+the real Smart Pacts Token by name.
+
+The examples under examples/ use @kadena/client and @kadena/cryptography-utils, which are
+Kadena's and carry their own licences.

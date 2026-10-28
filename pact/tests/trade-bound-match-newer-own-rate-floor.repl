@@ -1,0 +1,70 @@
+;; The newer order's floor in a match follows ITS OWN rate, not the
+;; rate in force nor the older order's; orders stored at 0 % keep their one-unit floor after a rise.
+;; Case 1: the NEWER order's floor follows the NEWER order's own effective rate —
+;; distinguished from the rate in force and from the older order's rate (the suite's
+;; NEWER-FLOOR-FOLLOWS-RATE has all three equal). Cases 2 and 3: an order stored at 0 % after a rise.
+(load "setup.repl")
+(env-exec-config [])
+(env-data
+  { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+
+;; ---- case 1: older M at 5 % (floor 20), newer T at 1 % (floor 100), rate back at 5 % when matched
+(begin-tx "rate 5 %, bob posts M: 50 units tok6 for 0.50 tok2")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"]) (set-fee-rate 0.05) (env-keys [])
+(env-chain-data { "block-time": (time "2026-11-01T00:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "M") 0.00005) (PLACE (tn.key tn.BOB "M"))] }])
+(create-order "M" tn.BOB (read-keyset "bob-g") n_bro.tok6 0.00005 n_bro.tok2 0.5 0.05)
+(commit-tx)
+(begin-tx "rate 1 %, alice posts T: 10.00 tok2 for 200 units tok6")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs []) (env-keys ["trade-key" "trade-key-2"]) (set-fee-rate 0.01) (env-keys [])
+(env-chain-data { "block-time": (time "2026-11-01T00:00:01Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE (tn.esc tn.ALICE "T") 10.0) (PLACE (tn.key tn.ALICE "T"))] }])
+(create-order "T" tn.ALICE (read-keyset "alice-g") n_bro.tok2 10.0 n_bro.tok6 0.0002 0.05)
+(commit-tx)
+(begin-tx "rate back to 5 %: T's effective rate stays 1 % (floor 100); M closes with a 50-unit piece")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs []) (env-keys ["trade-key" "trade-key-2"]) (set-fee-rate 0.05) (env-keys [])
+(expect "rates: in force 5 %, M effective 5 %, T effective 1 %" [0.05 0.05 0.01] [(fee-rate) (order-rate (get-order (tn.key tn.BOB "M"))) (order-rate (get-order (tn.key tn.ALICE "T")))])
+(expect-failure "NEWER-FLOOR-IS-NEWER-ORDERS-OWN-RATE: 50 units < T's 100-unit floor (in-force and older rate would both allow 20)"
+  "Match is too small: it is below 100 smallest units for the newer order"
+  (match-orders (tn.key tn.BOB "M") (tn.key tn.ALICE "T")))
+(rollback-tx)
+
+;; ---- cases 2 and 3: orders stored at 0 % keep a one-unit floor and zero fees after a rise to the cap
+(begin-tx "rate 0: bob posts Z (5 units tok6 for 5 units tok2), alice posts Y (1.00 tok2 for 100 units tok6)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs []) (env-keys ["trade-key" "trade-key-2"]) (set-fee-rate 0.0) (env-keys [])
+(env-chain-data { "block-time": (time "2026-11-02T00:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "Z") 0.000005) (PLACE (tn.key tn.BOB "Z"))
+                      (n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "Z2") 0.00001) (PLACE (tn.key tn.BOB "Z2"))] }])
+(create-order "Z" tn.BOB (read-keyset "bob-g") n_bro.tok6 0.000005 n_bro.tok2 0.05 0.05)
+(create-order "Z2" tn.BOB (read-keyset "bob-g") n_bro.tok6 0.00001 n_bro.tok2 0.1 0.05)
+(env-chain-data { "block-time": (time "2026-11-02T00:00:01Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE (tn.esc tn.ALICE "Y") 1.0) (PLACE (tn.key tn.ALICE "Y"))] }])
+(create-order "Y" tn.ALICE (read-keyset "alice-g") n_bro.tok2 1.0 n_bro.tok6 0.0001 0.05)
+(env-sigs []) (env-keys ["trade-key" "trade-key-2"]) (set-fee-rate 0.05) (env-keys [])
+(commit-tx)
+(begin-tx "case 2: match at 5 % in force: both stored 0 %, newer piece 5 units < 20 but >= its own 1-unit floor")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [])
+(expect "ZERO-RATE-ORDERS-MATCH-BELOW-THE-IN-FORCE-FLOOR: 5 units, zero fees each side" [0.0 0.000005 0.05 0.0 0.0]
+  (let ((q (match-orders (tn.key tn.BOB "Z") (tn.key tn.ALICE "Y")))) [(at 'rate q) (at 'amount q) (at 'cost q) (at 'taker-fee q) (at 'maker-fee q)]))
+(expect "rows and escrows agree after" [0.000095 0.000095 "open"]
+  [(at 'buy-remaining (get-order (tn.key tn.ALICE "Y"))) (- 0.0001 (- (n_bro.tok6.get-balance tn.ALICE) 100000.0)) (at 'status (get-order (tn.key tn.ALICE "Y")))])
+(commit-tx)
+(begin-tx "case 3: a 0 % order after the rise: one-unit partial fills, no fee transfer, cancel refunds the rest")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 0.01)] }])
+(expect "Z2 one-unit fill at 0 % while 5 % is in force" [0.0 0.000001 0.01 0.0 0.0]
+  (let ((q (fill-order (tn.key tn.BOB "Z2") tn.ALICE (read-keyset "alice-g") 0.000001 0.05))) [(at 'rate q) (at 'amount q) (at 'cost q) (at 'taker-fee q) (at 'maker-fee q)]))
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(CANCEL (tn.key tn.BOB "Z2"))] }])
+(expect "cancel refunds the 9 units left, escrow empty" [0.0 0.0] [(cancel-order (tn.key tn.BOB "Z2") 0.000009) (n_bro.tok6.get-balance (tn.esc tn.BOB "Z2"))])
+(commit-tx)

@@ -1,0 +1,154 @@
+;; What a token can see and do while trade calls it. Two invariants, each with its control:
+;;   NO-AUTHORITY-ON-BUY-LEGS  while the BUYER's token runs, no capability of ours is in scope
+;;                             (control: on the escrow-release leg ESCROW of that order IS in scope)
+;;   NO-REENTRY                a token called by trade cannot call back into trade and change an order
+;;                             (control: the same call outside a callback works)
+;;   NO-MAKER-AUTHORITY-ON-REFUND  while a cancel's refund runs the token, the maker's CANCEL is no
+;;                             longer in scope (a scoped signature counts for every guard check
+;;                             made under its capability, so the token could act as the maker)
+;;   ESCROW-GUARD-CHECKED      an escrow account someone opened first under their own guard is refused
+;; The witness token (fixtures/witness-token.pact) is an honest ledger that performs the check
+;; named in the transaction data before it moves anything.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "witness token")
+(env-keys ["admin-key"])
+(load "fixtures/witness-token.pact")
+(env-keys [])
+(env-data { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+          , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+(n_bro.witness.mint tn.BOB (read-keyset "bob-g") 1000.0)
+(n_bro.witness.mint tn.ALICE (read-keyset "alice-g") 1000.0)
+(commit-tx)
+
+(begin-tx "two orders: WB sells KDA and is paid in the witness token; WS sells the witness token for KDA")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(coin.TRANSFER tn.BOB (tn.esc tn.BOB "WB") 100.0) (PLACE (tn.key tn.BOB "WB"))
+                      (n_bro.witness.TRANSFER tn.BOB (tn.esc tn.BOB "WS") 10.0) (PLACE (tn.key tn.BOB "WS"))] }])
+(create-order "WB" tn.BOB (read-keyset "bob-g") coin 100.0 n_bro.witness 10.0 0.05)
+(create-order "WS" tn.BOB (read-keyset "bob-g") n_bro.witness 10.0 coin 100.0 0.05)
+(commit-tx)
+
+;; ---------------------------------------------------------------- NO-AUTHORITY-ON-BUY-LEGS
+(begin-tx "the buyer's token asks for ESCROW during the payment legs: it is not there")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-data { "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" }
+          , "witness-mode": "need-escrow", "witness-key": (tn.key tn.BOB "WB") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.witness.TRANSFER tn.ALICE tn.BOB 0.99) (n_bro.witness.TRANSFER tn.ALICE tn.SINK 0.01)] }])
+(expect-failure "NO-AUTHORITY-ON-BUY-LEGS: ESCROW is not in scope while the buy token runs"
+  "require-capability: not granted"
+  (fill-order (tn.key tn.BOB "WB") tn.ALICE (read-keyset "alice-g") 10.0 0.05))
+(rollback-tx)
+
+(begin-tx "control: on the release leg the sell token DOES see ESCROW of its own order")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-data { "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" }
+          , "witness-mode": "plain", "witness-key": (tn.key tn.BOB "WS") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 9.9) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 0.1)] }])
+(env-data { "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" }
+          , "witness-mode": "need-escrow", "witness-key": (tn.key tn.BOB "WS") })
+(expect "the sensor passes on the sell side (so its refusal above is real)" 9.0
+  (at 'sell-remaining (fill-order (tn.key tn.BOB "WS") tn.ALICE (read-keyset "alice-g") 1.0 0.05)))
+(rollback-tx)
+
+(begin-tx "and never the ESCROW of a DIFFERENT order")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-data { "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" }
+          , "witness-mode": "need-escrow", "witness-key": (tn.key tn.BOB "WB") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 9.9) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 0.1)] }])
+(expect-failure "the sell token of WS does not see ESCROW of WB" "require-capability: not granted"
+  (fill-order (tn.key tn.BOB "WS") tn.ALICE (read-keyset "alice-g") 1.0 0.05))
+(rollback-tx)
+
+;; ---------------------------------------------------------------- NO-MAKER-AUTHORITY-ON-REFUND
+(begin-tx "the sell token asks for the maker's CANCEL during the refund: it is not there")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-data { "witness-mode": "need-cancel", "witness-key": (tn.key tn.BOB "WS") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(CANCEL (tn.key tn.BOB "WS"))] }])
+(expect-failure "NO-MAKER-AUTHORITY-ON-REFUND: CANCEL is released before the token runs"
+  "require-capability: not granted"
+  (cancel-order (tn.key tn.BOB "WS") 10.0))
+(env-data { "witness-mode": "need-escrow", "witness-key": (tn.key tn.BOB "WS") })
+(expect "control: the refund itself works, inside ESCROW of that order only" 0.0 (cancel-order (tn.key tn.BOB "WS") 10.0))
+(rollback-tx)
+
+;; ---------------------------------------------------------------- ESCROW-GUARD-CHECKED
+(begin-tx "eve opens bob's next escrow account first, under her own guard")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-data { "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+          , "eve-g": { "keys": ["e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"], "pred": "keys-all" } })
+(n_bro.witness.create-account (tn.esc tn.BOB "WG") (read-keyset "eve-g"))
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.witness.TRANSFER tn.BOB (tn.esc tn.BOB "WG") 10.0) (PLACE (tn.key tn.BOB "WG"))] }])
+(expect-failure "ESCROW-GUARD-CHECKED: the deposit arrived but the account is eve's" "Escrow account is held by a foreign guard"
+  (create-order "WG" tn.BOB (read-keyset "bob-g") n_bro.witness 10.0 coin 100.0 0.05))
+(rollback-tx)
+
+;; ---------------------------------------------------------------- MATCH-ONE-ESCROW-AT-A-TIME
+;; In a match two escrows pay out. While the older order's token runs, only ITS order's ESCROW is in
+;; scope — never the other order's.
+(begin-tx "alice posts the counter-order to WS: 100 KDA for 10 witness")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2030-01-01T00:00:00Z") })
+(env-data { "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" }, "witness-mode": "plain", "witness-key": "" })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "AW") 100.0) (PLACE (tn.key tn.ALICE "AW"))] }])
+(create-order "AW" tn.ALICE (read-keyset "alice-g") coin 100.0 n_bro.witness 10.0 0.05)
+(env-sigs [])
+(env-data { "witness-mode": "need-escrow", "witness-key": (tn.key tn.ALICE "AW") })
+(expect-failure "MATCH-ONE-ESCROW-AT-A-TIME: the older order's token does not see the newer order's ESCROW"
+  "require-capability: not granted"
+  (match-orders (tn.key tn.BOB "WS") (tn.key tn.ALICE "AW")))
+(env-data { "witness-mode": "need-escrow", "witness-key": (tn.key tn.BOB "WS") })
+(expect "control: it sees its own, and the match settles" true (at 'closes (match-orders (tn.key tn.BOB "WS") (tn.key tn.ALICE "AW"))))
+(rollback-tx)
+
+;; ---------------------------------------------------------------- MAKER-ACCOUNT-NOT-SQUATTED
+;; The witness ledger keeps whatever guard an account was opened with (as a permissive token
+;; would). A maker whose receiving account there was opened by someone else is refused at posting;
+;; a maker without one gets it opened under their own guard.
+(begin-tx "eve opens bob's witness account first; bob cannot post an order paid in witness")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-data { "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+          , "eve-g": { "keys": ["e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"], "pred": "keys-all" }
+          , "witness-mode": "plain", "witness-key": "" })
+(n_bro.witness.rotate tn.BOB (read-keyset "eve-g"))
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(coin.TRANSFER tn.BOB (tn.esc tn.BOB "SQ") 10.0) (PLACE (tn.key tn.BOB "SQ"))] }])
+(expect-failure "MAKER-ACCOUNT-NOT-SQUATTED" "Maker's account in n_bro.witness exists with a foreign guard"
+  (create-order "SQ" tn.BOB (read-keyset "bob-g") coin 10.0 n_bro.witness 1.0 0.05))
+(rollback-tx)
+(begin-tx "eve has no tok6 account; her first order paid in tok6 opens it under her own guard")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(expect-failure "no account yet" "No value found" (n_bro.tok6.details tn.EVE))
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+           , "caps": [(coin.TRANSFER tn.EVE (tn.esc tn.EVE "OP") 10.0) (PLACE (tn.key tn.EVE "OP"))] }])
+(create-order "OP" tn.EVE (read-keyset "eve-g") coin 10.0 n_bro.tok6 1.0 0.05)
+(expect "MAKER-ACCOUNT-OPENED: eve's tok6 account exists under her guard" (read-keyset "eve-g") (at 'guard (n_bro.tok6.details tn.EVE)))
+(rollback-tx)
+
+;; ---------------------------------------------------------------- NO-REENTRY
+(begin-tx "a token called by trade calls back into trade")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+;; bob's signature even grants CANCEL of WS, so the ONLY thing stopping the callback is the engine
+(env-data { "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" }
+          , "witness-mode": "reenter", "witness-key": (tn.key tn.BOB "WS") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 9.9) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 0.1)] }
+           { "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(CANCEL (tn.key tn.BOB "WS"))] }])
+(expect-failure "NO-REENTRY: the sell token cannot cancel the order from inside its fill"
+  "Operation disallowed in read-only or sys-only mode"
+  (fill-order (tn.key tn.BOB "WS") tn.ALICE (read-keyset "alice-g") 1.0 0.05))
+(expect "control: the same cancel outside a callback works" 10.0 (cancel-order (tn.key tn.BOB "WS") 0.0))
+(rollback-tx)
+
+(begin-tx "nothing changed")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(expect "both orders still open and whole" [["open" 100.0] ["open" 10.0]]
+  (map (lambda (k) [(at 'status (get-order k)) (at 'sell-remaining (get-order k))]) [(tn.key tn.BOB "WB") (tn.key tn.BOB "WS")]))
+(commit-tx)

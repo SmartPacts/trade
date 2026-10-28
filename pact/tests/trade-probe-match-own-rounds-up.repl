@@ -1,0 +1,22 @@
+;; Probe: the newer order's own-price amount rounds UP (in its favour) when the 7th
+;; decimal is below one half. The suite's only case (own = 6.6666666…) rounds up either way.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "m: bob sells 2.00 TOK2 for 6.0 TOK6")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" , "caps": [(n_bro.tok2.TRANSFER tn.BOB (tn.esc tn.BOB "m") 2.0) (PLACE (tn.key tn.BOB "m"))] }])
+(create-order "m" tn.BOB (read-keyset "bob-g") n_bro.tok2 2.0 n_bro.tok6 6.0 0.05)
+(commit-tx)
+(begin-tx "t: alice sells 10.0 TOK6 for 2.40 TOK2 (own for 2.00 = 8.3333333…)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:05:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1" , "caps": [(n_bro.tok6.TRANSFER tn.ALICE (tn.esc tn.ALICE "t") 10.0) (PLACE (tn.key tn.ALICE "t"))] }])
+(create-order "t" tn.ALICE (read-keyset "alice-g") n_bro.tok6 10.0 n_bro.tok2 2.4 0.05)
+(env-sigs [])
+(env-events true)
+(match-orders (tn.key tn.BOB "m") (tn.key tn.ALICE "t"))
+(expect "OWN-ROUNDS-UP: own 8.333334 -> surplus 2.333334, t keeps 1.666666 for 0.40"
+  [[(tn.key tn.BOB "m") (tn.key tn.ALICE "t") 2.0 6.0 0.02 0.06 2.333334 1.666666 0.4]]
+  (tn.params "ORDER-MATCHED" (env-events true)))
+(commit-tx)

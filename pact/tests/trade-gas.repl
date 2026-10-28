@@ -1,0 +1,79 @@
+;; Gas of the three actions under the REPL table model, against the 150,000 ceiling. REPL figures
+;; are indicative only; earlier measurements put mainnet ~11% above devnet and devnet well off the REPL.
+(load "setup.repl")
+(env-exec-config [])
+(env-gasmodel "table")
+(env-gaslimit 150000)
+
+(begin-tx "create-order: BRO for KDA")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-01T00:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "G") 3.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "G"))] }])
+(env-gas 0)
+(create-order "G" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05)
+(print (format "GAS create-order (bro -> kda, first use of the fee sink in bro): {}" [(env-gas)]))
+(expect "create-order under 10% of the ceiling" true (< (env-gas) 15000))
+(commit-tx)
+
+(begin-tx "fill-order partial: KDA legs via SPT, BRO legs from escrow")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 99.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 1.0)] }])
+(env-gas 0)
+(fill-order (tn.key tn.BOB "G") tn.ALICE (read-keyset "alice-g") 1.0 0.05)
+(print (format "GAS fill-order partial (4 transfers, SPT funding path): {}" [(env-gas)]))
+(expect "fill-order under 10% of the ceiling" true (< (env-gas) 15000))
+(commit-tx)
+
+(begin-tx "fill-order closing")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 198.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 2.0)] }])
+(env-gas 0)
+(fill-order (tn.key tn.BOB "G") tn.ALICE (read-keyset "alice-g") 2.0 0.05)
+(print (format "GAS fill-order closing: {}" [(env-gas)]))
+(expect "closing fill under 10% of the ceiling" true (< (env-gas) 15000))
+(commit-tx)
+
+(begin-tx "create + cancel: KDA for BRO, with the longest allowed id")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(coin.TRANSFER tn.BOB (tn.esc tn.BOB "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH") 100.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.BOB "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH"))] }])
+(env-gas 0)
+(create-order "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH" tn.BOB (read-keyset "bob-g") coin 100.0 n_bro.bro 1.0 0.05)
+(print (format "GAS create-order (kda -> bro, 64-char id): {}" [(env-gas)]))
+(expect "create-order with the longest id under 10% of the ceiling" true (< (env-gas) 15000))
+(env-gas 0)
+(cancel-order (tn.key tn.BOB "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH") 100.0)
+(print (format "GAS cancel-order: {}" [(env-gas)]))
+(expect "cancel-order under 10% of the ceiling" true (< (env-gas) 15000))
+(commit-tx)
+
+(begin-tx "match-orders: two escrows, up to five transfers")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "MA") 1.0) (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "MA"))] }
+           { "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "MB") 60.0) (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.ALICE "MB"))] }])
+(create-order "MA" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(create-order "MB" tn.ALICE (read-keyset "alice-g") coin 60.0 n_bro.bro 0.5 0.05)
+(env-sigs [])
+(env-gas 0)
+(match-orders (tn.key tn.BOB "MA") (tn.key tn.ALICE "MB"))
+(print (format "GAS match-orders (5 transfers incl. the surplus): {}" [(env-gas)]))
+(expect "match-orders under 10% of the ceiling" true (< (env-gas) 15000))
+(commit-tx)
+
+(begin-tx "reads: the flat select penalty")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-gas 0)
+(open-orders)
+(print (format "GAS open-orders (select, 2 rows): {}" [(env-gas)]))
+(env-gas 0)
+(get-order (tn.key tn.BOB "G"))
+(print (format "GAS get-order: {}" [(env-gas)]))
+(commit-tx)

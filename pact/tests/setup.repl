@@ -1,0 +1,45 @@
+;; Test world for the trade suite: world.repl (real coin + interfaces, the live SPT module under its
+;; mainnet namespace, honest tokens at four precisions, behaviour fixtures, funded personas) plus
+;; trade deployed exactly as the deploy transaction does — the module file defines and enforces its
+;; own governance keyset.
+;; Keys: admin-key (SPT gov/ops, namespaces, token admin); trade-gov = trade-key, trade-key-2, trade-key-3 under keys-2 (the mainnet shape: any two sign). Personas are k: principals:
+;;   BOB   = k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0
+;;   ALICE = k:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+;;   EVE   = k:e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5
+;; In env-sigs the "key" must be the literal string; caps may use the `tn` constants below.
+(load "world.repl")
+
+(begin-tx "deploy trade — the module file defines and enforces its own governance keyset")
+(env-data
+  { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3"
+  , "upgrade": false
+  , "trade-gov": { "keys": ["trade-key" "trade-key-2" "trade-key-3"], "pred": "keys-2" } })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(load "../modules/trade.pact")
+(commit-tx)
+
+;; names every suite uses (governance refuses any upgrade: a constants-only test helper)
+(begin-tx "names")
+(module tn G
+  (defcap G () (enforce false "test names, never upgraded"))
+  (defconst BOB   "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0")
+  (defconst ALICE "k:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1")
+  (defconst EVE   "k:e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5")
+  (defconst TRADE "n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade")
+  (defconst SPT-FUNDING n_48867b242317a0216a67f8c7ca26696b5878e0e3.SPT.FUNDING-ACCOUNT)
+  (defconst SINK (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.fee-sink))
+  (defun key:string (maker:string id:string) (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.order-key maker id))
+  (defun esc:string (maker:string id:string) (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.escrow-account (key maker id)))
+  ;; the params of every trade event called `name` among `evs` (pass (env-events true))
+  (defun params (name:string evs:[object])
+    (map (lambda (e) (at 'params e))
+      (filter (lambda (e) (= (at 'name e) (format "{}.{}" [TRADE name]))) evs))))
+(commit-tx)
+
+(env-data
+  { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" }
+  , "eve-g":   { "keys": ["e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"], "pred": "keys-all" } })
+(env-keys [])
+(env-sigs [])
+(env-chain-data { "block-time": (time "2026-10-01T00:00:00Z") })

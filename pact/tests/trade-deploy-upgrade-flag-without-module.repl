@@ -1,0 +1,12 @@
+;; DEPLOY FAILS CLOSED — UPGRADE-FLAG-WITHOUT-MODULE: the governance keyset exists, the module does
+;; not, and the transaction says upgrade. The header passes (the keyset is there and signed), so
+;; the LAST line of the module file is what refuses: it probes the orders table.
+;; One refusal per file: a failed load leaves the REPL unusable, so it is the last form.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "keyset exists, module does not, upgrade flag on")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": true, "ks": { "keys": ["trade-key"], "pred": "keys-all" } })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(namespace "n_48867b242317a0216a67f8c7ca26696b5878e0e3")
+(define-keyset "n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade-gov" (read-keyset "ks"))
+(expect-failure "UPGRADE-FLAG-WITHOUT-MODULE: the footer probe refuses" "trade_orders not found" (load "../modules/trade.pact"))

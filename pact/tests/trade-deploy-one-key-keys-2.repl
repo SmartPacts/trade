@@ -1,0 +1,9 @@
+;; DEPLOY FAILS CLOSED — a fresh deploy whose trade-gov is ONE key under keys-2: the keyset can never be
+;; satisfied, so the deploy's own enforce-keyset aborts it (nobody could govern the module).
+;; One refusal per file: a failed load leaves the REPL unusable, so it is the last form.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "a fresh deploy whose trade-gov is one key under keys-2")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": false, "trade-gov": { "keys": ["c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"], "pred": "keys-2" } })
+(env-keys ["admin-key" "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"])
+(expect-failure "a fresh deploy whose trade-gov is one key under keys-2" "Keyset failure" (load "../modules/trade.pact"))

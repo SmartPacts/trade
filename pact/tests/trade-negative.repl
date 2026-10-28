@@ -1,0 +1,198 @@
+;; Branch-complete negative coverage: every enforce in create-order, quote/fill-order and
+;; cancel-order proven to FAIL with its exact error. Refusal blocks end in rollback-tx because
+;; expect-failure keeps REPL writes made before the failing step (on chain the whole tx reverts).
+(load "setup.repl")
+(env-exec-config [])
+
+(begin-tx "a squatted fee sink in a ledger with no reserved-name policy")
+(env-data { "eve": { "keys": ["e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"], "pred": "keys-all" }
+          , "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+          , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" }
+          , "eve-g":   { "keys": ["e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"], "pred": "keys-all" } })
+(n_bro.short-credit.create-account tn.SINK (read-keyset "eve"))
+(commit-tx)
+
+;; ================================================================ create-order
+(begin-tx "create-order refusals")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+;; bob signs PLACE for every id used below, so each refusal is the check under test and not the signature
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "O"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "K"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "O2"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "O3"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "O4"))] }])
+;; The row is written before PLACE is checked, and a refusal AFTER that point leaves it in the REPL's
+;; open transaction (on chain the whole transaction reverts): C12 and C13 each use their own id.
+;; C1 id shape
+(expect-failure "C1 empty id" "Order id must be 1 to 64 characters"
+  (create-order "" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05))
+(expect-failure "C1 65-char id" "Order id must be 1 to 64 characters"
+  (create-order "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05))
+(expect-failure "C1 a space in the id" "Order id may contain only letters, digits, - and _"
+  (create-order "my order" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05))
+(expect-failure "C1 markup in the id" "Order id may contain only letters, digits, - and _"
+  (create-order "<b>x</b>" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05))
+;; C2 maker must be a principal matching the guard
+(expect-failure "C2 wrong guard for a k: name" "must be a principal account matching its guard"
+  (create-order "O" tn.BOB (read-keyset "eve-g") n_bro.bro 3.0 coin 300.0 0.05))
+(expect-failure "C2 vanity account" "must be a principal account matching its guard"
+  (create-order "O" "bob" (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05))
+;; C3 same token both sides
+(expect-failure "C3 sell = buy" "Sell and buy token must differ"
+  (create-order "O" tn.BOB (read-keyset "bob-g") coin 3.0 coin 300.0 0.05))
+;; C4-C5 amounts positive
+(expect-failure "C4 zero sell" "Sell amount must be positive"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 0.0 coin 300.0 0.05))
+(expect-failure "C4 negative sell" "Sell amount must be positive"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro -3.0 coin 300.0 0.05))
+(expect-failure "C5 zero buy" "Buy amount must be positive"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 0.0 0.05))
+(expect-failure "C5 negative buy" "Buy amount must be positive"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin -300.0 0.05))
+;; C6-C7 precision
+(expect-failure "C6 sell over precision" "Sell amount exceeds the sell token precision"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0000000000001 coin 300.0 0.05))
+(expect-failure "C7 buy over precision" "Buy amount exceeds the buy token precision"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0000000000001 0.05))
+(expect-failure "C7 buy over a 2-decimal token's precision" "Buy amount exceeds the buy token precision"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 n_bro.tok2 300.001 0.05))
+;; C8-C9 the 100-unit floor on both sides of the order
+(expect-failure "C8 an order selling 99 units" "Order is too small: it sells less than 100 smallest units of the sell token"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 0.000000000099 coin 300.0 0.05))
+(expect-failure "C9 an order asking 99 units" "Order is too small: it asks less than 100 smallest units of the buy token"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 0.000000000099 0.05))
+(expect-failure "C9 an order asking 0.99 of a 2-decimal token" "Order is too small: it asks less than 100 smallest units of the buy token"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 n_bro.tok2 0.99 0.05))
+;; C12 fee sink in either ledger
+(expect-failure "C12 sink squatted in the BUY ledger" "Fee sink account exists with a foreign guard"
+  (create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 n_bro.short-credit 300.0 0.05))
+(expect-failure "C12 sink squatted in the SELL ledger" "Fee sink account exists with a foreign guard"
+  (create-order "O2" tn.BOB (read-keyset "bob-g") n_bro.short-credit 3.0 coin 300.0 0.05))
+(expect-failure "C12 a ledger that refuses the r: sink" "Unrecognized reserved protocol"
+  (create-order "O3" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 n_bro.k-only 300.0 0.05))
+;; C13 the maker's deposit is signed by the maker: nothing moves without the sell-token cap
+(expect-failure "C13 deposit not signed" "Managed capability not installed"
+  (create-order "O4" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05))
+(rollback-tx)
+(begin-tx "C14 a k:-only ledger cannot hold the c: escrow either")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.k-only.TRANSFER tn.BOB (tn.esc tn.BOB "K") 3.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "K"))] }])
+(expect-failure "C14 k:-only sell token" "Unrecognized reserved protocol"
+  (create-order "K" tn.BOB (read-keyset "bob-g") n_bro.k-only 3.0 coin 300.0 0.05))
+(rollback-tx)
+
+;; ================================================================ an order to fill against
+(begin-tx "bob opens O: 3 BRO for 300 KDA")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(expect "nothing survived the refusals" [] (orders-of tn.BOB))
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "O") 3.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "O"))] }])
+(create-order "O" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05)
+(commit-tx)
+
+;; ================================================================ quote / fill-order
+(begin-tx "fill refusals")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 99.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 1.0)] }])
+(expect-failure "F1 taker guard mismatch" "must be a principal account matching its guard"
+  (fill-order (tn.key tn.BOB "O") tn.ALICE (read-keyset "eve-g") 1.0 0.05))
+(expect-failure "F2 unknown order" "No value found" (fill-order "nope" tn.ALICE (read-keyset "alice-g") 1.0 0.05))
+(expect-failure "F3 zero amount" "Take must be positive" (quote (tn.key tn.BOB "O") 0.0))
+(expect-failure "F3 negative amount" "Take must be positive" (quote (tn.key tn.BOB "O") -1.0))
+(expect-failure "F4 over precision" "Take exceeds the sell token precision" (quote (tn.key tn.BOB "O") 1.0000000000001))
+(expect-failure "F5 over remaining" "Take exceeds the remaining amount" (quote (tn.key tn.BOB "O") 3.000000000001))
+;; F6-F7: no maker minimum — any partial fill worth at least 100 units of each token is taken
+(expect "F6 NO-MAKER-MINIMUM: a small piece is accepted" 2.999 (at 'sell-remaining (quote (tn.key tn.BOB "O") 0.001)))
+(expect "F6 a piece that leaves almost nothing is accepted" 0.000000000001 (at 'sell-remaining (quote (tn.key tn.BOB "O") 2.999999999999)))
+(expect-failure "F6 a fill of 99 sell units" "Fill is too small: it is below 100 smallest units of the sell token" (quote (tn.key tn.BOB "O") 0.000000000099))
+(expect "F6 a fill of exactly 100 sell units costs 10,000 buy units and is taken" 0.00000001 (at 'cost (quote (tn.key tn.BOB "O") 0.0000000001)))
+(expect "F7 the closing fill is exempt from the floor" true (at 'closes (quote (tn.key tn.BOB "O") 3.0)))
+;; F8 self-fill
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(coin.TRANSFER tn.BOB tn.BOB 99.0) (coin.TRANSFER tn.BOB tn.SPT-FUNDING 1.0)] }])
+(expect-failure "F8 maker fills own order" "Maker cannot fill their own order"
+  (fill-order (tn.key tn.BOB "O") tn.BOB (read-keyset "bob-g") 1.0 0.05))
+;; F9 the taker's payment needs the taker's signature, scoped to the exact legs
+(env-sigs [])
+(expect-failure "F9 unsigned" "Managed capability not installed"
+  (fill-order (tn.key tn.BOB "O") tn.ALICE (read-keyset "alice-g") 1.0 0.05))
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caps": [(coin.TRANSFER tn.ALICE tn.BOB 99.0)] }])
+(expect-failure "F9 fee leg not signed" "Managed capability not installed"
+  (fill-order (tn.key tn.BOB "O") tn.ALICE (read-keyset "alice-g") 1.0 0.05))
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 98.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 1.0)] }])
+(expect-failure "F9 signed for less than the quote" "TRANSFER exceeded"
+  (fill-order (tn.key tn.BOB "O") tn.ALICE (read-keyset "alice-g") 1.0 0.05))
+(rollback-tx)
+;; F10: 1,000 units for 100 units — taking 999 would cost all 100 and leave 1 unit priced at nothing
+(begin-tx "F10 a partial fill may not take the whole price")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "T") 0.000000001)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "T"))] }])
+(create-order "T" tn.BOB (read-keyset "bob-g") n_bro.bro 0.000000001 coin 0.0000000001 0.05)
+(expect-failure "F10 999 of 1,000 units for all 100" "Fill would leave nothing to pay for the remainder" (quote (tn.key tn.BOB "T") 0.000000000999))
+(expect "F10 the whole order is taken instead, for exactly its price" [true 0.0000000001] [(at 'closes (quote (tn.key tn.BOB "T") 0.000000001)) (at 'cost (quote (tn.key tn.BOB "T") 0.000000001))])
+(rollback-tx)
+(begin-tx "nothing moved")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(expect "O untouched by every refusal" 3.0 (at 'sell-remaining (get-order (tn.key tn.BOB "O"))))
+(expect "alice untouched" 10000.0 (coin.get-balance tn.ALICE))
+(commit-tx)
+
+;; ================================================================ cancel-order
+(begin-tx "cancel refusals on an open order")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.BOB "O"))] }])
+(expect-failure "X1 negative refund" "Refund cannot be negative" (cancel-order (tn.key tn.BOB "O") -1.0))
+(expect-failure "X2 refund above the balance" "Refund exceeds the escrow balance of 3.0" (cancel-order (tn.key tn.BOB "O") 3.000000000001))
+(expect-failure "X3 unknown order" "No value found" (cancel-order "nope" 1.0))
+(rollback-tx)
+
+;; ================================================================ a CANCELLED order
+(begin-tx "bob cancels O taking 1 of 3 back")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.BOB "O"))] }])
+(expect "2 BRO remain in escrow, refundable" 2.0 (cancel-order (tn.key tn.BOB "O") 1.0))
+(commit-tx)
+(begin-tx "a cancelled order cannot be quoted or filled")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 99.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 1.0)] }])
+(expect-failure "N1 quote of a cancelled order" "Order is not open" (quote (tn.key tn.BOB "O") 1.0))
+(expect-failure "N2 fill of a cancelled order — the escrow still holds 2 BRO and no taker can reach it"
+  "Order is not open" (fill-order (tn.key tn.BOB "O") tn.ALICE (read-keyset "alice-g") 1.0 0.05))
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5", "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.BOB "O"))] }])
+(expect-failure "N3 a stranger cannot take the remaining escrow of a cancelled order" "Keyset failure"
+  (cancel-order (tn.key tn.BOB "O") 2.0))
+(rollback-tx)
+(begin-tx "the maker can — nothing is ever stranded")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.BOB "O"))] }])
+(expect-failure "N4 still bounded by the balance" "Refund exceeds the escrow balance of 2.0" (cancel-order (tn.key tn.BOB "O") 2.5))
+(expect "NO-STRAND: the rest comes back on a second call" 0.0 (cancel-order (tn.key tn.BOB "O") 2.0))
+(expect "bob holds his 1000 BRO again" 1000.0 (n_bro.bro.get-balance tn.BOB))
+(expect "a third call with nothing left is a no-op" 0.0 (cancel-order (tn.key tn.BOB "O") 0.0))
+(commit-tx)
+
+;; ================================================================ a FILLED order
+(begin-tx "a filled order: no fill, no quote; a stray balance still belongs to the maker")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "Z") 1.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "Z"))] }])
+(create-order "Z" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 99.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 1.0)] }])
+(fill-order (tn.key tn.BOB "Z") tn.ALICE (read-keyset "alice-g") 1.0 0.05)
+(expect "filled" "filled" (at 'status (get-order (tn.key tn.BOB "Z"))))
+(expect-failure "N5 quote of a filled order" "Order is not open" (quote (tn.key tn.BOB "Z") 1.0))
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+           , "caps": [(coin.TRANSFER tn.EVE tn.BOB 99.0) (coin.TRANSFER tn.EVE tn.SPT-FUNDING 1.0)] }])
+(expect-failure "N6 fill of a filled order" "Order is not open" (fill-order (tn.key tn.BOB "Z") tn.EVE (read-keyset "eve-g") 1.0 0.05))
+(commit-tx)

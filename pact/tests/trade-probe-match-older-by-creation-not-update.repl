@@ -1,0 +1,35 @@
+;; Probe: "older" in match-orders means CREATED earlier. An order created first but
+;; partially filled later must still be the one whose price is used. The rest of the suite never matches
+;; a pair where the older order was updated after the newer one was created, so a check comparing against
+;; the newer-named order's updated-at would stay green there; this test goes red.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "t0: alice bids 60 KDA for 0.5 BRO (120 per BRO)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:00:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "bid") 60.0) (PLACE (tn.key tn.ALICE "bid"))] }])
+(create-order "bid" tn.ALICE (read-keyset "alice-g") coin 60.0 n_bro.bro 0.5 0.05)
+(commit-tx)
+(begin-tx "t1: bob asks 1 BRO for 100 KDA")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:05:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "ask") 1.0) (PLACE (tn.key tn.BOB "ask"))] }])
+(create-order "ask" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(commit-tx)
+(begin-tx "t2: eve fills half of alice's bid (its updated-at is now after bob's created-at)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:10:00Z") })
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+           , "caps": [(n_bro.bro.TRANSFER tn.EVE tn.ALICE 0.2475) (n_bro.bro.TRANSFER tn.EVE tn.SINK 0.0025)] }])
+(fill-order (tn.key tn.ALICE "bid") tn.EVE (read-keyset "eve-g") 30.0 0.05)
+(commit-tx)
+(begin-tx "t3: naming bob's newer ask first is still refused")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:15:00Z") })
+(env-sigs [])
+(expect-failure "MATCH-OLDER-BY-CREATION: the older order is the one created first, whatever its last fill"
+  "The first order must be the older one: its price is the one used"
+  (match-orders (tn.key tn.BOB "ask") (tn.key tn.ALICE "bid")))
+(rollback-tx)

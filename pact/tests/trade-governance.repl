@@ -1,0 +1,44 @@
+;; Upgrade path: the order book survives an upgrade signed by trade-gov, the upgrade transaction's
+;; own probe confirms the table, and nobody else can take the module. The LAST form is a load that
+;; must fail (a failed load leaves the REPL unusable, so nothing may follow it).
+(load "setup.repl")
+(env-exec-config [])
+
+(begin-tx "an open order before the upgrade")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "U") 3.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "U"))] }])
+(create-order "U" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05)
+(expect "DEPLOYED-PROBE: the orders table answers" true (deployed))
+(commit-tx)
+
+(begin-tx "UPGRADE-KEEPS-ORDERS: trade-gov upgrades; rows, escrow and escrow names are untouched")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": true })
+(env-sigs [{ "key": "admin-key", "caps": [] } { "key": "trade-key", "caps": [] } { "key": "trade-key-2", "caps": [] }])
+(load "../modules/trade.pact")
+(expect "the order is still open" "open" (at 'status (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.get-order (tn.key tn.BOB "U"))))
+(expect "its escrow still holds 3 BRO under the same account name" 3.0 (n_bro.bro.get-balance (tn.esc tn.BOB "U")))
+(commit-tx)
+
+(begin-tx "a fill after the upgrade settles from the pre-upgrade escrow")
+(env-data { "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 99.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 1.0)] }])
+(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.fill-order (tn.key tn.BOB "U") tn.ALICE (read-keyset "alice-g") 1.0 0.05)
+(expect "alice received 0.99 BRO on top of her 1000" 1000.99 (n_bro.bro.get-balance tn.ALICE))
+(commit-tx)
+
+(begin-tx "GOV-ONLY: module admin needs trade-gov; the SPT keys alone are not enough")
+(env-sigs [{ "key": "admin-key", "caps": [] }])
+(expect-failure "admin of the module without trade-key" "Keyset failure"
+  (acquire-module-admin n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade))
+(env-sigs [])
+(expect-failure "admin of the module with no signature" "Keyset failure"
+  (acquire-module-admin n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade))
+(rollback-tx)
+
+(begin-tx "UPGRADE-NEEDS-GOV: the upgrade file itself aborts at its header without trade-gov")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": true })
+(env-sigs [{ "key": "admin-key", "caps": [] }])
+(expect-failure "upgrade without trade-key" "Keyset failure" (load "../modules/trade.pact"))

@@ -1,0 +1,17 @@
+;; A taker who has NO account in the sell token receives it (the release opens the account under the
+;; taker's guard). Every other test's taker already holds the sell token, so releasing with transfer
+;; (no create) would stay green there.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "bob sells 1 TOK6 for 100 KDA; eve has no TOK6 account")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "u") 1.0) (PLACE (tn.key tn.BOB "u"))] }])
+(create-order "u" tn.BOB (read-keyset "bob-g") n_bro.tok6 1.0 coin 100.0 0.05)
+(expect-failure "eve has no tok6 account" "No value found" (n_bro.tok6.details tn.EVE))
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+           , "caps": [(coin.TRANSFER tn.EVE tn.BOB 49.5) (coin.TRANSFER tn.EVE tn.SPT-FUNDING 0.5)] }])
+(fill-order (tn.key tn.BOB "u") tn.EVE (read-keyset "eve-g") 0.5 0.05)
+(expect "TAKER-ACCOUNT-OPENED-BY-RELEASE: eve holds 0.495 TOK6 under her own guard"
+  [0.495 (read-keyset "eve-g")] [(n_bro.tok6.get-balance tn.EVE) (at 'guard (n_bro.tok6.details tn.EVE))])
+(rollback-tx)

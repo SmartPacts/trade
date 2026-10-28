@@ -1,0 +1,38 @@
+;; FROZEN-IS-FINAL — with FROZEN-MODULE true (fixtures/trade-frozen.pact: the module with that one
+;; constant flipped) no key can take module admin or upgrade, and trading goes on.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "deploy the frozen build")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": false, "trade-gov": { "keys": ["trade-key" "trade-key-2" "trade-key-3"], "pred": "keys-2" } })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(load "fixtures/trade-frozen.pact")
+(commit-tx)
+
+(begin-tx "trading works on the frozen build")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-data { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" } })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" (escrow-account (order-key "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" "Z")) 3.0)
+                      (PLACE (order-key "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" "Z"))] }])
+(create-order "Z" "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05)
+(expect "one open order" 1 (length (open-orders)))
+(commit-tx)
+
+(begin-tx "FROZEN-KEEPS-FEE-ADMIN: the governance keys still set the fee rate on the frozen build")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(expect "set-fee-rate works while frozen" "fee rate 0.02" (set-fee-rate 0.02))
+(expect "and reads back" 0.02 (fee-rate))
+(env-keys [])
+(expect-failure "but still only for governance" "Keyset failure" (set-fee-rate 0.01))
+(commit-tx)
+(begin-tx "no key takes the frozen module")
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(expect-failure "module admin with every key" "Module is frozen"
+  (acquire-module-admin n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade))
+(rollback-tx)
+
+(begin-tx "FROZEN-IS-FINAL: an upgrade signed by trade-gov is refused")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": true })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(expect-failure "upgrade of the frozen module" "Module is frozen" (load "../modules/trade.pact"))

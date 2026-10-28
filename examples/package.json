@@ -1,0 +1,22 @@
+{
+  "name": "smart-pacts-trade-examples",
+  "private": true,
+  "type": "module",
+  "description": "Runnable integration examples for the Smart Pacts Trade contract: read the book, quote, create, fill, match and cancel orders with @kadena/client.",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "keys": "node src/keys.ts",
+    "book": "node src/read-book.ts",
+    "walkthrough": "node src/walkthrough.ts",
+    "typecheck": "tsc --noEmit",
+    "check-docs": "node src/check-doc-snippets.ts"
+  },
+  "dependencies": {
+    "@kadena/client": "^1.18.3",
+    "@kadena/cryptography-utils": "^0.4.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,16 @@
+;; Pins the order of operations in the cost: ceiling((amount * br) / sr), never ceiling(amount * (br / sr)). When br/sr repeats and
+;; amount*br/sr lands exactly on the buy token's grid, dividing first rounds the ratio up and the ceiling
+;; adds one smallest unit. Checked at 2, 6 and 18 buy decimals.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "orders whose price ratio repeats")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "D2") 3.0) (PLACE (tn.key tn.BOB "D2"))
+                                 (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "D6") 3.0) (PLACE (tn.key tn.BOB "D6"))
+                                 (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "D18") 3.0) (PLACE (tn.key tn.BOB "D18"))] }])
+(create-order "D2" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 n_bro.tok2 2.0 0.05)
+(create-order "D6" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 n_bro.tok6 2.0 0.05)
+(create-order "D18" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 n_bro.tok18 2.0 0.05)
+(expect "COST-EXACT-ON-GRID: 2.1 of 3 for 2 costs exactly 1.4 at 2, 6 and 18 buy decimals" [1.4 1.4 1.4]
+  [(at 'cost (quote (tn.key tn.BOB "D2") 2.1)) (at 'cost (quote (tn.key tn.BOB "D6") 2.1)) (at 'cost (quote (tn.key tn.BOB "D18") 2.1))])
+(rollback-tx)

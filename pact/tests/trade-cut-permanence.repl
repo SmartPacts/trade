@@ -1,0 +1,122 @@
+;; CUT-IS-PERMANENT (rule: a fee cut is permanent for orders posted while it lasts): an order posted
+;; while a NON-ZERO cut is in force stores the cut rate and
+;; keeps it after the fee rises again — and a cut that stays ABOVE an order's posted rate does not
+;; reach that order at all. Also precision gaps: a match whose newer order sells an
+;; 18-decimal token, fills across the pairs the suite lacked, a trade paid in an 18-decimal token
+;; after a rate change.
+(load "setup.repl")
+(env-exec-config [])
+(env-data
+  { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+
+(begin-tx "the fee is cut to 0.5 %; bob posts C (2.0 tok6 for 200.00 tok2) while the cut is in force")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.005)
+(env-keys [])
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "C") 2.0) (PLACE (tn.key tn.BOB "C"))] }])
+(create-order "C" tn.BOB (read-keyset "bob-g") n_bro.tok6 2.0 n_bro.tok2 200.0 0.005)
+(expect "CUT-RATE-IS-STORED: the row stores 0.5 %, not the 1 % of first deploy" 0.005 (at 'fee-rate (get-order (tn.key tn.BOB "C"))))
+(commit-tx)
+
+(begin-tx "the fee rises back to 1 %, then to 5 %: C still pays 0.5 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.01)
+(env-keys [])
+(expect "CUT-IS-PERMANENT (non-zero cut): after the rise to 1 % a fill of C is charged 0.5 %" [0.005 0.5 0.005]
+  (let ((q (quote (tn.key tn.BOB "C") 1.0))) [(at 'rate q) (at 'maker-fee q) (at 'taker-fee q)]))
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.05)
+(env-keys [])
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 99.5) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.5)] }])
+(expect "CUT-IS-PERMANENT (non-zero cut): at 5 % in force the fill itself pays 0.5 % — 0.50 tok2 and 0.005 tok6" [0.005 100.0 0.5 0.005 0.995]
+  (let ((q (fill-order (tn.key tn.BOB "C") tn.ALICE (read-keyset "alice-g") 1.0 0.005))) [(at 'rate q) (at 'cost q) (at 'maker-fee q) (at 'taker-fee q) (at 'taker-net q)]))
+(commit-tx)
+
+(begin-tx "CUT-ABOVE-POSTED-RATE-DOES-NOT-REACH: an order posted at 1 %, fee at 2 % then cut to 1.5 %, still pays 1 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.01)
+(env-keys [])
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "P") 1.0) (PLACE (tn.key tn.BOB "P"))] }])
+(create-order "P" tn.BOB (read-keyset "bob-g") n_bro.tok6 1.0 n_bro.tok2 100.0 0.01)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.02)
+(set-fee-rate 0.015)
+(env-keys [])
+(expect "CUT-ABOVE-POSTED-RATE-DOES-NOT-REACH" [0.01 1.0] (let ((q (quote (tn.key tn.BOB "P") 1.0))) [(at 'rate q) (at 'maker-fee q)]))
+(rollback-tx)
+
+;; ---- precision pairs the suite lacked ---------------------------------------------------------
+(begin-tx "rate 2 %; orders across the missing pairs: 18→6, 6→18, 2→12, 18→2, 2→18")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.02)
+(env-keys [])
+(env-chain-data { "block-time": (time "2026-11-01T00:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok18.TRANSFER tn.BOB (tn.esc tn.BOB "A186") 3.0) (PLACE (tn.key tn.BOB "A186"))
+                      (n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "A618") 3.0) (PLACE (tn.key tn.BOB "A618"))
+                      (n_bro.tok2.TRANSFER tn.BOB (tn.esc tn.BOB "A212") 3.0) (PLACE (tn.key tn.BOB "A212"))
+                      (n_bro.tok18.TRANSFER tn.BOB (tn.esc tn.BOB "A182") 3.0) (PLACE (tn.key tn.BOB "A182"))
+                      (n_bro.tok18.TRANSFER tn.BOB (tn.esc tn.BOB "M") 7.000000000000000007) (PLACE (tn.key tn.BOB "M"))] }])
+(create-order "A186" tn.BOB (read-keyset "bob-g") n_bro.tok18 3.0 n_bro.tok6 7.0 0.02)
+(create-order "A618" tn.BOB (read-keyset "bob-g") n_bro.tok6 3.0 n_bro.tok18 7.0 0.02)
+(create-order "A212" tn.BOB (read-keyset "bob-g") n_bro.tok2 3.0 n_bro.bro 7.0 0.02)
+(create-order "A182" tn.BOB (read-keyset "bob-g") n_bro.tok18 3.0 n_bro.tok2 7.0 0.02)
+(create-order "M" tn.BOB (read-keyset "bob-g") n_bro.tok18 7.000000000000000007 n_bro.tok6 21.0 0.02)
+(commit-tx)
+
+(begin-tx "FILL-PAIRS: 1 unit-third of each, cost rounded up at the buy precision, fee floored at each side's precision, at 2 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+;; each expected figure is the rule written out: cost = ceiling(amount × buy-remaining / sell-remaining, buy precision);
+;; maker fee = floor(cost × 0.02, buy precision); taker fee = floor(amount × 0.02, sell precision)
+(expect "18→6: 0.333333333333333333 tok18 costs ceiling(0.777777…, 6)" [0.777778 0.015555 0.006666666666666666]
+  (let ((q (quote (tn.key tn.BOB "A186") 0.333333333333333333))) [(at 'cost q) (at 'maker-fee q) (at 'taker-fee q)]))
+(expect "6→18: 0.333333 tok6 costs ceiling(0.777776999…, 18) = 0.777777 exactly" [0.777777 0.01555554 0.006666]
+  (let ((q (quote (tn.key tn.BOB "A618") 0.333333))) [(at 'cost q) (at 'maker-fee q) (at 'taker-fee q)]))
+(expect "2→12: 0.66 tok2 (66 units, above the 50-unit floor at 2 %) costs 1.54 bro; taker fee floor(0.0132, 2) = 0.01" [1.54 0.0308 0.01]
+  (let ((q (quote (tn.key tn.BOB "A212") 0.66))) [(at 'cost q) (at 'maker-fee q) (at 'taker-fee q)]))
+(expect "18→2: 0.333333333333333333 tok18 costs ceiling(0.7777…, 2) = 0.78" [0.78 0.01 0.006666666666666666]
+  (let ((q (quote (tn.key tn.BOB "A182") 0.333333333333333333))) [(at 'cost q) (at 'maker-fee q) (at 'taker-fee q)]))
+(commit-tx)
+
+(begin-tx "RATE-CHANGE-THEN-PAID-IN-18-DECIMALS: the fee is cut to 0.3 %, then A618 (paid in tok18) is filled")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.003)
+(env-keys [])
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok18.TRANSFER tn.ALICE tn.BOB 0.775443669) (n_bro.tok18.TRANSFER tn.ALICE tn.SINK 0.002333331)] }])
+(expect "RATE-CHANGE-THEN-PAID-IN-18-DECIMALS: cost 0.777777 tok18, fee floor(0.777777 × 0.003, 18) = 0.002333331, taker fee floor(0.333333 × 0.003, 6) = 0.000999" [0.003 0.777777 0.002333331 0.775443669 0.000999]
+  (let ((q (fill-order (tn.key tn.BOB "A618") tn.ALICE (read-keyset "alice-g") 0.333333 0.003))) [(at 'rate q) (at 'cost q) (at 'maker-fee q) (at 'maker-net q) (at 'taker-fee q)]))
+(commit-tx)
+
+(begin-tx "MATCH-NEWER-SELLS-18-DECIMALS: alice (newer, at 0.3 %) sells 1.000000000000000001 tok18 for 2.9 tok6 against a tok6 seller")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-11-01T00:10:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "OLD") 6.0) (PLACE (tn.key tn.BOB "OLD"))] }])
+(create-order "OLD" tn.BOB (read-keyset "bob-g") n_bro.tok6 6.0 n_bro.tok18 2.0 0.003)
+(env-chain-data { "block-time": (time "2026-11-01T00:20:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok18.TRANSFER tn.ALICE (tn.esc tn.ALICE "NEW") 1.000000000000000001) (PLACE (tn.key tn.ALICE "NEW"))] }])
+(create-order "NEW" tn.ALICE (read-keyset "alice-g") n_bro.tok18 1.000000000000000001 n_bro.tok6 2.9 0.003)
+(env-sigs [])
+;; OLD sells 6 tok6 for 2 tok18 (1 tok18 = 3 tok6). NEW wants 2.9 tok6 for 1.000000000000000001 tok18.
+;; amount = min(6, 2.9) = 2.9 tok6; cost at OLD's price = ceiling(2.9 × 2 / 6, 18) = 0.966666666666666667 tok18;
+;; NEW closes (it gets all 2.9), so it gives up everything it locked and the difference comes back.
+(let ((a18 (n_bro.tok18.get-balance tn.ALICE))
+      (q (match-orders (tn.key tn.BOB "OLD") (tn.key tn.ALICE "NEW"))))
+  (expect "MATCH-NEWER-SELLS-18-DECIMALS: 2.9 tok6 for 0.966666666666666667 tok18; bob's fee floor(cost × 0.003, 18); alice's fee floor(2.9 × 0.003, 6)"
+    [2.9 0.966666666666666667 0.0029 0.0087 2.8913]
+    [(at 'amount q) (at 'cost q) (at 'maker-fee q) (at 'taker-fee q) (at 'taker-net q)])
+  (expect "the surplus 1.000000000000000001 − 0.966666666666666667 came back to alice, exact at 18 decimals; her escrow is empty; NEW is filled"
+    [0.033333333333333334 0.0 "filled"]
+    [(- (n_bro.tok18.get-balance tn.ALICE) a18) (n_bro.tok18.get-balance (tn.esc tn.ALICE "NEW")) (at 'status (get-order (tn.key tn.ALICE "NEW")))]))
+(commit-tx)

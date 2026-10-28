@@ -1,0 +1,149 @@
+;; The worked example, end to end: Bob sells 3 BRO for 300 KDA; Alice buys 1 BRO for 100 KDA;
+;; Bob's order becomes 2 BRO for 200 KDA; SPT funding receives 1 KDA; the fee sink receives 0.01 BRO.
+;; Then the mirror case (an order that SELLS KDA, whose fee leaves the escrow for SPT funding),
+;; the reads, and every event's contents.
+(load "setup.repl")
+(env-exec-config [])
+
+;; ---- identities ------------------------------------------------------------------------------
+(begin-tx "identities")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(expect "fee sink is the r: principal of the SPT gov keyset" "r:n_48867b242317a0216a67f8c7ca26696b5878e0e3.spt-gov" tn.SINK)
+(expect "escrow account is a c: principal" "c:" (typeof-principal (tn.esc tn.BOB "o1")))
+(expect "the key is bound to the maker: same id, different maker, different key" true
+  (!= (order-key tn.BOB "o1") (order-key tn.ALICE "o1")))
+(expect "fee receiver for KDA is SPT's funding account" tn.SPT-FUNDING (fee-receiver "coin"))
+(expect "fee receiver for any other token is the sink" tn.SINK (fee-receiver "n_bro.bro"))
+(commit-tx)
+
+;; ---- Bob opens: 3 BRO for 300 KDA ---------------------------------------------------------
+(begin-tx "bob creates o1")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "o1") 3.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "o1"))] }])
+(expect "create-order returns the key" (tn.key tn.BOB "o1")
+  (create-order "o1" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05))
+(expect "escrow holds 3 BRO" 3.0 (n_bro.bro.get-balance (tn.esc tn.BOB "o1")))
+(expect "bob gave 3 BRO" 997.0 (n_bro.bro.get-balance tn.BOB))
+(let ((o (get-order (tn.key tn.BOB "o1"))))
+  (expect "row: key, id, maker" [(tn.key tn.BOB "o1") "o1" tn.BOB] [(at 'key o) (at 'id o) (at 'maker o)])
+  (expect "open, 3 for 300" ["open" 3.0 300.0] [(at 'status o) (at 'sell-remaining o) (at 'buy-remaining o)])
+  (expect "full module names" ["n_bro.bro" "coin"] [(at 'sell-name o) (at 'buy-name o)])
+  (expect "precisions pinned" [12 12] [(at 'sell-precision o) (at 'buy-precision o)]))
+(expect "ORDER-CREATED carries every field incl. the rate"
+  [[(tn.key tn.BOB "o1") tn.BOB "o1" "n_bro.bro" 3.0 "coin" 300.0 0.01]]
+  (tn.params "ORDER-CREATED" (env-events true)))
+(commit-tx)
+
+;; ---- the quote Alice's wallet needs ------------------------------------------------------------
+(begin-tx "quote 1 BRO")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(let ((q (quote (tn.key tn.BOB "o1") 1.0)))
+  (expect "cost 100, maker 99 + fee 1, taker 0.99 + fee 0.01, leaves 2 for 200, not closing"
+    [100.0 99.0 1.0 0.99 0.01 2.0 200.0 false]
+    [(at 'cost q) (at 'maker-net q) (at 'maker-fee q) (at 'taker-net q) (at 'taker-fee q)
+     (at 'sell-remaining q) (at 'buy-remaining q) (at 'closes q)]))
+(commit-tx)
+
+;; ---- Alice fills 1 BRO with ONE signature: two coin caps, nothing else ------------------------
+(begin-tx "alice fills 1 BRO")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-01T01:00:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE tn.BOB 99.0) (coin.TRANSFER tn.ALICE tn.SPT-FUNDING 1.0)] }])
+(expect "fill returns the quote" 100.0 (at 'cost (fill-order (tn.key tn.BOB "o1") tn.ALICE (read-keyset "alice-g") 1.0 0.05)))
+(expect "alice paid 100 KDA" 9900.0 (coin.get-balance tn.ALICE))
+(expect "bob received 99 KDA" 10099.0 (coin.get-balance tn.BOB))
+(expect "SPT funding created with 1 KDA" 1.0 (coin.get-balance tn.SPT-FUNDING))
+(expect "alice received 0.99 BRO" 1000.99 (n_bro.bro.get-balance tn.ALICE))
+(expect "sink received 0.01 BRO" 0.01 (n_bro.bro.get-balance tn.SINK))
+(expect "escrow keeps 2 BRO" 2.0 (n_bro.bro.get-balance (tn.esc tn.BOB "o1")))
+(let ((o (get-order (tn.key tn.BOB "o1"))))
+  (expect "still open, 2 for 200, updated" ["open" 2.0 200.0 (time "2026-10-01T01:00:00Z")]
+    [(at 'status o) (at 'sell-remaining o) (at 'buy-remaining o) (at 'updated-at o)]))
+(expect "ORDER-FILLED carries key, taker, amount, cost, both fees and the remainder"
+  [[(tn.key tn.BOB "o1") tn.ALICE 1.0 100.0 0.01 1.0 2.0 200.0]]
+  (tn.params "ORDER-FILLED" (env-events true)))
+(commit-tx)
+
+;; ---- the fee sink is spendable by the SPT governance keys alone ------------------------------
+(begin-tx "spt-gov spends the sink")
+(env-sigs [{ "key": "admin-key", "caps": [(n_bro.bro.TRANSFER tn.SINK tn.EVE 0.01)] }])
+(n_bro.bro.transfer tn.SINK tn.EVE 0.01)
+(expect "sink emptied by the gov keys" 0.0 (n_bro.bro.get-balance tn.SINK))
+(commit-tx)
+(begin-tx "a stranger cannot")
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5", "caps": [(n_bro.bro.TRANSFER tn.SINK tn.EVE 0.01)] }])
+(expect-failure "stranger cannot spend the sink" "Keyset failure" (n_bro.bro.transfer tn.SINK tn.EVE 0.001))
+(rollback-tx)
+
+;; ---- reads -------------------------------------------------------------------------------------
+(begin-tx "reads")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(expect "open-orders lists o1" [(tn.key tn.BOB "o1")] (map (at 'key) (open-orders)))
+(expect "open-orders-for the pair" [(tn.key tn.BOB "o1")] (map (at 'key) (open-orders-for "n_bro.bro" "coin")))
+(expect "open-orders-for the reverse pair is empty" [] (open-orders-for "coin" "n_bro.bro"))
+(expect "orders-of bob" ["o1"] (map (at 'id) (orders-of tn.BOB)))
+(expect "orders-of alice" [] (orders-of tn.ALICE))
+(expect "the upgrade probe sees the table" true (deployed))
+(commit-tx)
+
+;; ---- Eve takes the rest; the closing fill pays exactly what is left --------------------------
+(begin-tx "eve closes o1")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+           , "caps": [(coin.TRANSFER tn.EVE tn.BOB 198.0) (coin.TRANSFER tn.EVE tn.SPT-FUNDING 2.0)] }])
+(let ((q (fill-order (tn.key tn.BOB "o1") tn.EVE (read-keyset "eve-g") 2.0 0.05)))
+  (expect "closes, cost = the 200 left" [true 200.0] [(at 'closes q) (at 'cost q)]))
+(expect "escrow empty" 0.0 (n_bro.bro.get-balance (tn.esc tn.BOB "o1")))
+(expect "eve received 1.98 BRO (plus the 0.01 the gov keys sent her)" 1001.99 (n_bro.bro.get-balance tn.EVE))
+(expect "bob received 198 more KDA" 10297.0 (coin.get-balance tn.BOB))
+(expect "filled" "filled" (at 'status (get-order (tn.key tn.BOB "o1"))))
+(expect "no open orders" [] (open-orders))
+(commit-tx)
+
+;; ---- the mirror: an order that SELLS KDA; its fee leaves the escrow for SPT funding -----------
+(begin-tx "alice sells 100 KDA for 1 BRO")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "k1") 100.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.ALICE "k1"))] }])
+(create-order "k1" tn.ALICE (read-keyset "alice-g") coin 100.0 n_bro.bro 1.0 0.05)
+(expect "KDA escrow holds 100" 100.0 (coin.get-balance (tn.esc tn.ALICE "k1")))
+(commit-tx)
+(begin-tx "bob fills 40 KDA of it, paying BRO")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB tn.ALICE 0.396) (n_bro.bro.TRANSFER tn.BOB tn.SINK 0.004)] }])
+(let ((q (fill-order (tn.key tn.ALICE "k1") tn.BOB (read-keyset "bob-g") 40.0 0.05)))
+  (expect "cost 0.4 BRO: 0.396 to alice, 0.004 to the sink; bob nets 39.6 KDA, 0.4 KDA to SPT"
+    [0.4 0.396 0.004 39.6 0.4] [(at 'cost q) (at 'maker-net q) (at 'maker-fee q) (at 'taker-net q) (at 'taker-fee q)]))
+(expect "bob received 39.6 KDA from the escrow" 10336.6 (coin.get-balance tn.BOB))
+(expect "SPT funding received 0.4 KDA from the escrow (3 + 0.4)" 3.4 (coin.get-balance tn.SPT-FUNDING))
+(expect "KDA escrow keeps 60" 60.0 (coin.get-balance (tn.esc tn.ALICE "k1")))
+(expect "sink received 0.004 BRO (on top of the 0.02 from the closing fill of o1)" 0.024 (n_bro.bro.get-balance tn.SINK))
+(commit-tx)
+
+;; ---- cancel: closes the order to fills, refunds what the maker asks, can be called again -----
+(begin-tx "alice cancels k1 taking 20 of the 60 back")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.ALICE "k1"))] }])
+(expect "returns what is still in escrow" 40.0 (cancel-order (tn.key tn.ALICE "k1") 20.0))
+(expect "cancelled, nothing left to fill" ["cancelled" 0.0 0.0]
+  (let ((o (get-order (tn.key tn.ALICE "k1")))) [(at 'status o) (at 'sell-remaining o) (at 'buy-remaining o)]))
+(expect "ORDER-CANCELLED then ESCROW-REFUNDED 20"
+  [[[(tn.key tn.ALICE "k1")]] [[(tn.key tn.ALICE "k1") 20.0]]]
+  [(tn.params "ORDER-CANCELLED" (env-events false)) (tn.params "ESCROW-REFUNDED" (env-events true))])
+(commit-tx)
+(begin-tx "nothing is stranded: alice comes back for the other 40")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.CANCEL (tn.key tn.ALICE "k1"))] }])
+(expect "second call empties the escrow" 0.0 (cancel-order (tn.key tn.ALICE "k1") 40.0))
+(expect "escrow empty" 0.0 (coin.get-balance (tn.esc tn.ALICE "k1")))
+(expect "no second ORDER-CANCELLED, one more refund" [[] [[(tn.key tn.ALICE "k1") 40.0]]]
+  [(tn.params "ORDER-CANCELLED" (env-events false)) (tn.params "ESCROW-REFUNDED" (env-events true))])
+(expect "alice has her 100 KDA back less the 40 sold" 9860.0 (coin.get-balance tn.ALICE))
+(commit-tx)

@@ -1,0 +1,8 @@
+;; DEPLOY FAILS CLOSED — a deploy without the upgrade flag
+;; One refusal per file: a failed load leaves the REPL unusable, so it is the last form.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "a deploy without the upgrade flag")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "trade-gov": { "keys": ["trade-key" "trade-key-2" "trade-key-3"], "pred": "keys-2" } })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(expect-failure "a deploy without the upgrade flag" "read-msg failure" (load "../modules/trade.pact"))

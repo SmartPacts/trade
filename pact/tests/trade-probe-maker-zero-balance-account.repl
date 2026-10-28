@@ -1,0 +1,23 @@
+;; A maker whose receiving account in the buy token EXISTS with balance 0.0 under her own guard must be
+;; able to post (the `-1.0` sentinel means "no account"; a real zero balance is an existing account); the
+;; same shape is checked in ensure-fee-sink. Without this file the suite never posts with an empty but
+;; existing receiving account, so `<` -> `<=` (re-creating it, which the ledger refuses) would stay green.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "eve opens an empty tok6 account, then posts KDA for tok6")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(n_bro.tok6.create-account tn.EVE (read-keyset "eve-g"))
+(expect "eve's tok6 account exists, empty" 0.0 (n_bro.tok6.get-balance tn.EVE))
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+           , "caps": [(coin.TRANSFER tn.EVE (tn.esc tn.EVE "Z0") 10.0) (PLACE (tn.key tn.EVE "Z0"))] }])
+(expect "MAKER-ZERO-BALANCE-ACCOUNT-POSTS" (tn.key tn.EVE "Z0")
+  (create-order "Z0" tn.EVE (read-keyset "eve-g") coin 10.0 n_bro.tok6 1.0 0.05))
+(rollback-tx)
+(begin-tx "the fee sink exists in tok6 with balance 0.0: an order selling tok6 still posts")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(n_bro.tok6.create-account tn.SINK (keyset-ref-guard "n_48867b242317a0216a67f8c7ca26696b5878e0e3.spt-gov"))
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "S0") 1.0) (PLACE (tn.key tn.BOB "S0"))] }])
+(expect "SINK-ZERO-BALANCE-ACCOUNT-POSTS" (tn.key tn.BOB "S0")
+  (create-order "S0" tn.BOB (read-keyset "bob-g") n_bro.tok6 1.0 coin 1.0 0.05))
+(rollback-tx)

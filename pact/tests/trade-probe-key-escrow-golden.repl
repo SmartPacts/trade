@@ -1,0 +1,22 @@
+;; Probe: the ONE-WAY DOOR — the key and escrow derivation pinned to literal values.
+;; The suite compares the contract's order-key/escrow-account only with ITSELF (tn.key/tn.esc call
+;; the module), so a changed derivation stays green while it would strand every order after an upgrade.
+;; Literals read on pact 5.4. The order KEY does not depend on the module name;
+;; the ESCROW account does: it is the principal of a capability guard, and the capability's name includes the
+;; module's (….trade.ESCROW). So renaming the module moved every escrow address — harmless before the first
+;; deploy, a one-way door after it: this literal was re-read when the module took its final name, trade.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "golden values")
+(expect "KEY-DERIVATION-GOLDEN: order-key BOB o1" "2T6Q36s7LpmRcq_zH87_tP68AE6__DD_M0TELbEpWjo"
+  (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.order-key tn.BOB "o1"))
+(expect "ESCROW-DERIVATION-GOLDEN: escrow-account of that key" "c:iRk1Aiy0utNFUHCvtqDkgsrfSUGmlTJqTlXNzqkDlWI"
+  (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.escrow-account "2T6Q36s7LpmRcq_zH87_tP68AE6__DD_M0TELbEpWjo"))
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB "c:iRk1Aiy0utNFUHCvtqDkgsrfSUGmlTJqTlXNzqkDlWI" 3.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE "2T6Q36s7LpmRcq_zH87_tP68AE6__DD_M0TELbEpWjo")] }])
+(expect "the order created under that key escrows into that account"
+  ["2T6Q36s7LpmRcq_zH87_tP68AE6__DD_M0TELbEpWjo" 3.0]
+  [(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.create-order "o1" tn.BOB (read-keyset "bob-g") n_bro.bro 3.0 coin 300.0 0.05)
+   (n_bro.bro.get-balance "c:iRk1Aiy0utNFUHCvtqDkgsrfSUGmlTJqTlXNzqkDlWI")])
+(commit-tx)

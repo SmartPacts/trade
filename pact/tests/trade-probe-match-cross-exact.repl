@@ -1,0 +1,15 @@
+;; Goes red if the cross check compares cost with the ROUNDED own instead of the exact cross-multiplication:
+;; the newer order would pay more per unit than its remaining amounts allow, by under one smallest unit.
+;; Newer T: 100.00 tok2 for 300 BRO (1/3 tok2 per BRO). Older M: 100 BRO for 33.34 tok2 (above 1/3).
+;; 100 BRO costs T 33.34 > 33.333…: the orders do not cross, although ceiling(33.333…, 2) = 33.34.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "M then T")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "M") 100.0) (PLACE (tn.key tn.BOB "M"))] }
+           { "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caps": [(n_bro.tok2.TRANSFER tn.ALICE (tn.esc tn.ALICE "T") 100.0) (PLACE (tn.key tn.ALICE "T"))] }])
+(create-order "M" tn.BOB (read-keyset "bob-g") n_bro.bro 100.0 n_bro.tok2 33.34 0.05)
+(create-order "T" tn.ALICE (read-keyset "alice-g") n_bro.tok2 100.0 n_bro.bro 300.0 0.05)
+(expect-failure "MATCH-CROSS-IS-EXACT: a price one rounding unit above the newer order's is refused" "The orders do not cross"
+  (match-orders (tn.key tn.BOB "M") (tn.key tn.ALICE "T")))
+(rollback-tx)

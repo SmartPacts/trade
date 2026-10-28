@@ -1,0 +1,58 @@
+;; NO-PLACE-DURING-DEPOSIT — no capability of ours is in scope while the SELL token runs the
+;; deposit. Elsewhere the suite senses PLACE only at the buy token's create-account (trade-spy-buy-token.repl)
+;; and ESCROW/CANCEL in the witness token; without this file nothing senses PLACE during the deposit
+;; transfer, so wrapping the deposit in PLACE(key) would stay green. dspy is an honest ledger that records what is in scope at transfer.
+(load "setup.repl")
+(env-exec-config [])
+(env-data { "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+          , "aud": { "keys": ["aud-key"], "pred": "keys-all" } })
+(begin-tx "deposit spy")
+(env-keys ["aud-key"])
+(define-namespace "aud" (read-keyset "aud") (read-keyset "aud"))
+(namespace "aud")
+(define-keyset "aud.g" (read-keyset "aud"))
+(module dspy "aud.g"
+  (implements fungible-v2)
+  (defschema seen place:bool maker-guard-passes:bool)
+  (deftable sightings:{seen})
+  (defschema account balance:decimal guard:guard)
+  (deftable ledger:{account})
+  (defcap TRANSFER:bool (sender:string receiver:string amount:decimal) @managed amount TRANSFER-mgr
+    (enforce-guard (at 'guard (read ledger sender))))
+  (defun TRANSFER-mgr:decimal (managed:decimal requested:decimal) (- managed requested))
+  (defun mint (account:string guard:guard amount:decimal) (write ledger account { "balance": amount, "guard": guard }))
+  (defun transfer:string (sender:string receiver:string amount:decimal) (enforce false "unused"))
+  (defun transfer-create:string (sender:string receiver:string receiver-guard:guard amount:decimal)
+    (let ((k (read-msg "spy-key")) (mg (at 'guard (read ledger sender))))
+      (write sightings "deposit"
+        { "place": (try false (require-capability (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE k)))
+        , "maker-guard-passes": (try false (enforce-guard mg)) }))
+    (with-capability (TRANSFER sender receiver amount)
+      (update ledger sender { "balance": (- (at 'balance (read ledger sender)) amount) })
+      (with-default-read ledger receiver { "balance": 0.0, "guard": receiver-guard } { "balance" := b }
+        (write ledger receiver { "balance": (+ b amount), "guard": receiver-guard }))
+      "ok"))
+  (defun get-balance:decimal (account:string) (at 'balance (read ledger account)))
+  (defun details:object{fungible-v2.account-details} (account:string)
+    (with-read ledger account { "balance" := b, "guard" := g } { "account": account, "balance": b, "guard": g }))
+  (defun precision:integer () 12)
+  (defun enforce-unit:bool (amount:decimal) true)
+  (defun create-account:string (account:string guard:guard) (insert ledger account { "balance": 0.0, "guard": guard }) "ok")
+  (defun rotate:string (account:string new-guard:guard) (enforce false "unused"))
+  (defun seen-at:object (k:string) (read sightings k))
+  (defpact transfer-crosschain:string (sender:string receiver:string receiver-guard:guard target-chain:string amount:decimal)
+    (step (format "x" []))))
+(create-table sightings)
+(create-table ledger)
+(dspy.mint tn.BOB (read-keyset "bob-g") 10.0)
+(commit-tx)
+(begin-tx "bob sells dspy; what the sell token saw during the deposit")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys [])
+(env-data { "spy-key": (tn.key tn.BOB "S"), "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" } })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(aud.dspy.TRANSFER tn.BOB (tn.esc tn.BOB "S") 1.0) (PLACE (tn.key tn.BOB "S"))] }])
+(create-order "S" tn.BOB (read-keyset "bob-g") aud.dspy 1.0 coin 10.0 0.05)
+(expect "NO-PLACE-DURING-DEPOSIT: PLACE is not in scope and the PLACE-scoped signature does not pass"
+  { "place": false, "maker-guard-passes": false } (aud.dspy.seen-at "deposit"))
+(rollback-tx)

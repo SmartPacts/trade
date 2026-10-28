@@ -1,0 +1,62 @@
+;; The chain as it is BEFORE trade is deployed (setup.repl adds the deploy; the deploy tests start
+;; here). Loads the REAL mainnet coin + interfaces, the live SPT module under its mainnet namespace
+;; (trade calls SPT.receive-funding statically), honest coin-pattern tokens at FOUR precisions (bro 12,
+;; tok2 2, tok6 6, tok18 18 — rounding bugs hide when every token has 12), the behaviour fixtures
+;; (odd-tokens), and funds the personas. Key: admin-key (SPT gov/ops, namespaces, token admin).
+
+(begin-tx "load coin")
+(load "fixtures/fungible-v2.pact")
+(load "fixtures/fungible-xchain-v1.pact")
+(load "fixtures/gas-payer-v1.pact")
+(load "fixtures/coin.pact")
+(create-table coin.coin-table)
+(create-table coin.allocation-table)
+(commit-tx)
+
+(begin-tx "SPT namespace, keysets, module")
+(env-data
+  { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3"
+  , "upgrade": false
+  , "spt-gov-name": "n_48867b242317a0216a67f8c7ca26696b5878e0e3.spt-gov"
+  , "spt-gov": { "keys": ["admin-key"], "pred": "keys-all" }
+  , "spt-ops-name": "n_48867b242317a0216a67f8c7ca26696b5878e0e3.spt-ops"
+  , "spt-ops": { "keys": ["admin-key"], "pred": "keys-any" } })
+(env-keys ["admin-key"])
+(define-namespace "n_48867b242317a0216a67f8c7ca26696b5878e0e3" (read-keyset 'spt-gov) (read-keyset 'spt-gov))
+(load "fixtures/SPT.pact")
+(commit-tx)
+
+(begin-tx "tokens: bro (12), tok2, tok6, tok18, and the behaviour fixtures")
+(env-data { "bro-admin": { "keys": ["admin-key"], "pred": "keys-all" } })
+(env-keys ["admin-key"])
+(define-namespace "n_bro" (read-keyset 'bro-admin) (read-keyset 'bro-admin))
+(define-keyset "n_bro.bro-admin" (read-keyset 'bro-admin))
+(load "fixtures/bro.pact")
+(load "fixtures/tok2.pact")
+(load "fixtures/tok6.pact")
+(load "fixtures/tok18.pact")
+(load "fixtures/odd-tokens.pact")
+(commit-tx)
+
+(begin-tx "personas")
+(env-data
+  { "bob":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "alice": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" }
+  , "eve":   { "keys": ["e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"], "pred": "keys-all" } })
+(env-keys ["admin-key"])
+(test-capability (coin.COINBASE))
+(coin.coinbase "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" (read-keyset "bob")   10000.0)
+(coin.coinbase "k:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1" (read-keyset "alice") 10000.0)
+(coin.coinbase "k:e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5" (read-keyset "eve")   10000.0)
+(n_bro.bro.mint   "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" (read-keyset "bob")   1000.0)
+(n_bro.bro.mint   "k:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1" (read-keyset "alice") 1000.0)
+(n_bro.bro.mint   "k:e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5" (read-keyset "eve")   1000.0)
+(n_bro.tok2.mint  "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" (read-keyset "bob")   100000.0)
+(n_bro.tok2.mint  "k:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1" (read-keyset "alice") 100000.0)
+(n_bro.tok6.mint  "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" (read-keyset "bob")   100000.0)
+(n_bro.tok6.mint  "k:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1" (read-keyset "alice") 100000.0)
+(n_bro.tok18.mint "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" (read-keyset "bob")   100000.0)
+(n_bro.tok18.mint "k:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1" (read-keyset "alice") 100000.0)
+(n_bro.short-credit.mint "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" (read-keyset "bob") 100.0)
+(n_bro.k-only.mint "k:b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0" (read-keyset "bob") 100.0)
+(commit-tx)

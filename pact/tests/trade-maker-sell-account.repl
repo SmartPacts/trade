@@ -1,0 +1,30 @@
+;; MAKER-SELL-ACCOUNT-GUARD: a maker whose own account in the SELL token carries
+;; a guard other than the one they post with could post, but every refund would then fail in the
+;; token ("account guards do not match") until they repaired the account. Refused at posting instead.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "an old-style row: k:c4.. in bro held by a two-key keys-any guard")
+(env-keys ["admin-key"])
+(env-data { "legacy": { "keys": ["c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" "0th3r"], "pred": "keys-any" } })
+(acquire-module-admin n_bro.bro)
+(write n_bro.bro.coin-table "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" { "balance": 50.0, "guard": (read-keyset 'legacy) })
+(commit-tx)
+(env-keys [])
+(env-data { "carol-g": { "keys": ["c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4"], "pred": "keys-all" } })
+(begin-tx "carol posts 5 BRO for 500 KDA from that account")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4"
+           , "caps": [(n_bro.bro.TRANSFER "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" (tn.esc "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" "L") 5.0) (PLACE (tn.key "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" "L"))] }])
+(expect-failure "MAKER-SELL-ACCOUNT-GUARD: refused at posting, nothing locked" "Maker's account in n_bro.bro exists with a foreign guard"
+  (create-order "L" "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" (read-keyset 'carol-g) n_bro.bro 5.0 coin 500.0 0.05))
+(rollback-tx)
+(begin-tx "the remedy is the maker's own: rotate the account to its principal guard, then post")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4"
+           , "caps": [(n_bro.bro.ROTATE "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4") (n_bro.bro.TRANSFER "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" (tn.esc "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" "L") 5.0) (PLACE (tn.key "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" "L"))] }])
+(n_bro.bro.rotate "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" (read-keyset 'carol-g))
+(expect "posts after the rotate" (tn.key "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" "L") (create-order "L" "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" (read-keyset 'carol-g) n_bro.bro 5.0 coin 500.0 0.05))
+(env-sigs [{ "key": "c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4", "caps": [(CANCEL (tn.key "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" "L"))] }])
+(cancel-order (tn.key "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4" "L") 5.0)
+(expect "and the refund comes home" 50.0 (n_bro.bro.get-balance "k:c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4c4"))
+(commit-tx)

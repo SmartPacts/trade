@@ -1,0 +1,10 @@
+;; Goes red if ID-CHARS gains "." or ":": the charset refusal is pinned only for a space, markup and the
+;; edges in trade-probe-id-charset-edges.repl; other punctuation is never tried.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "ids with . and :")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(PLACE (tn.key tn.BOB "a.b")) (PLACE (tn.key tn.BOB "a:b")) (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "a.b") 1.0) (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "a:b") 1.0)] }])
+(expect-failure "ID-CHARSET: a dot" "Order id may contain only letters, digits, - and _" (create-order "a.b" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 1.0 0.05))
+(expect-failure "ID-CHARSET: a colon" "Order id may contain only letters, digits, - and _" (create-order "a:b" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 1.0 0.05))
+(rollback-tx)

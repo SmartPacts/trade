@@ -1,0 +1,80 @@
+;; max-rate: the rate a maker or taker ACCEPTS is part of what they sign. A rate
+;; change landing between what they saw and inclusion can refuse the transaction, never charge more.
+;; Also the stored-rate rule at 18 and 12 decimals.
+(load "setup.repl")
+(env-exec-config [])
+(env-data
+  { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+
+(begin-tx "MAKER-BOUND-BY-MAX-RATE: bob accepts 1 %; a rise to 2 % lands first; his posting is refused, never stored at 2 %")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.02)
+(env-keys [])
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok18.TRANSFER tn.BOB (tn.esc tn.BOB "A") 1.5) (PLACE (tn.key tn.BOB "A"))] }])
+(expect-failure "MAKER-BOUND-BY-MAX-RATE" "Fee rate 0.02 is above the 0.01 you accepted"
+  (create-order "A" tn.BOB (read-keyset "bob-g") n_bro.tok18 1.5 n_bro.bro 3.0 0.01))
+(expect-failure "a negative max-rate accepts nothing" "Fee rate 0.02 is above the -0.01 you accepted"
+  (create-order "A" tn.BOB (read-keyset "bob-g") n_bro.tok18 1.5 n_bro.bro 3.0 -0.01))
+(expect "exactly the rate in force is accepted" (tn.key tn.BOB "A")
+  (create-order "A" tn.BOB (read-keyset "bob-g") n_bro.tok18 1.5 n_bro.bro 3.0 0.02))
+(expect "stored at 2 %" 0.02 (at 'fee-rate (get-order (tn.key tn.BOB "A"))))
+(rollback-tx)
+
+(begin-tx "bob posts A at 1 %: 1.5 tok18 for 3.0 bro (18 and 12 decimals)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.01)
+(env-keys [])
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok18.TRANSFER tn.BOB (tn.esc tn.BOB "A") 1.5) (PLACE (tn.key tn.BOB "A"))] }])
+(create-order "A" tn.BOB (read-keyset "bob-g") n_bro.tok18 1.5 n_bro.bro 3.0 0.01)
+(commit-tx)
+
+(begin-tx "TAKER-BOUND-BY-MAX-RATE: alice is quoted after a cut to 0.5 %; a re-raise to 0.51 % lands first (still under A's 1 %)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.005)
+(env-keys [])
+(expect "quoted at 0.5 %" 0.005 (at 'rate (quote (tn.key tn.BOB "A") 0.333333333333333333)))
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.0051)
+(env-keys [])
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.bro.TRANSFER tn.ALICE tn.BOB 0.663333333334) (n_bro.bro.TRANSFER tn.ALICE tn.SINK 0.003333333333)] }])
+(expect-failure "TAKER-BOUND-BY-MAX-RATE: the fill she signed at 0.5 % is refused, not charged 0.51 %" "Fee rate 0.0051 is above the 0.005 you accepted"
+  (fill-order (tn.key tn.BOB "A") tn.ALICE (read-keyset "alice-g") 0.333333333333333333 0.005))
+(rollback-tx)
+
+(begin-tx "STORED-RATE-AT-18-DECIMALS: the rate rises to 5 %; A still pays 1 % on both legs, exact at 18 and 12 decimals")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.05)
+(env-keys [])
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.bro.TRANSFER tn.ALICE tn.BOB 0.660000000001) (n_bro.bro.TRANSFER tn.ALICE tn.SINK 0.006666666666)] }])
+(expect "STORED-RATE-AT-18-DECIMALS: cost ceiling(0.333…×3/1.5, 12) = 0.666666666667; maker fee floor(cost×1 %, 12); taker fee floor(amount×1 %, 18)"
+  [0.01 0.666666666667 0.006666666666 0.003333333333333333 0.33]
+  (let ((q (fill-order (tn.key tn.BOB "A") tn.ALICE (read-keyset "alice-g") 0.333333333333333333 0.01)))
+    [(at 'rate q) (at 'cost q) (at 'maker-fee q) (at 'taker-fee q) (at 'taker-net q)]))
+(expect "escrow holds exactly the remainder" [1.166666666666666667 1.166666666666666667]
+  [(n_bro.tok18.get-balance (tn.esc tn.BOB "A")) (at 'sell-remaining (get-order (tn.key tn.BOB "A")))])
+(commit-tx)
+
+(begin-tx "MATCH-MIXED-RATES-AT-18-DECIMALS: alice posts B at 5 % (1.0 bro for 0.4 tok18), matched against A at A's price; bob pays 1 % of the cost, alice 5 % of 0.4 tok18")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-05T00:00:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.bro.TRANSFER tn.ALICE (tn.esc tn.ALICE "B") 1.0) (PLACE (tn.key tn.ALICE "B"))] }])
+(create-order "B" tn.ALICE (read-keyset "alice-g") n_bro.bro 1.0 n_bro.tok18 0.4 0.05)
+(env-sigs [])
+(let ((q (match-orders (tn.key tn.BOB "A") (tn.key tn.ALICE "B")))
+      (sr-b (at 'sell-remaining (get-order (tn.key tn.ALICE "B")))))
+  (expect "MATCH-MIXED-RATES-AT-18-DECIMALS: 0.4 tok18 at A's price 2 bro/tok18 = 0.8 bro; bob 1 % of 0.8; alice 5 % of 0.4; A stays open" [0.01 0.4 0.8 0.008 0.02 false]
+    [(at 'rate q) (at 'amount q) (at 'cost q) (at 'maker-fee q) (at 'taker-fee q) (at 'closes q)])
+  (expect "B closed: her 0.2 bro surplus came back, escrow empty" [true 0.0 0.0]
+    [(= "filled" (at 'status (get-order (tn.key tn.ALICE "B")))) sr-b (n_bro.bro.get-balance (tn.esc tn.ALICE "B"))])
+  (expect "A's escrow equals its remainder" (at 'sell-remaining (get-order (tn.key tn.BOB "A"))) (n_bro.tok18.get-balance (tn.esc tn.BOB "A"))))
+(commit-tx)

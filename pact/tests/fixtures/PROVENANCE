@@ -1,0 +1,21 @@
+Snapshots in this directory (copied, never generated). sync-fixtures.sh --check verifies every
+sha256 below on each run of run-tests.sh.
+
+coin.pact, fungible-v2.pact, fungible-xchain-v1.pact, gas-payer-v1.pact
+  Kadena's coin contract (a test copy of it) and the fungible-v2, fungible-xchain-v1 and
+  gas-payer-v1 interfaces. Not ours: Kadena's, under its BSD-3-Clause licence
+  (github.com/kadena-io/chainweb-node). Loaded only so the suite runs with no network.
+
+SPT.pact
+  The Smart Pacts Token, n_48867b242317a0216a67f8c7ca26696b5878e0e3.SPT, which trade calls for
+  KDA fees (SPT.receive-funding). Its (module SPT …) form is character for character the code
+  mainnet01 reports on all 20 chains (read 2026-10-28; module hash
+  -wm-9DG1dHz9GdrUqJdDEd7Jb8-XTnOyaFiBY8p7S5Y). The lines outside the module form are its deploy
+  transaction's header and table footer. Re-check against the chain at any time:
+    python3 .github/scripts/verify-onchain.py --module SPT --file pact/tests/fixtures/SPT.pact
+
+e99c51f0781b1d0c43882c42189efd745791d10060679abf32706e0bfae3f437  coin.pact
+8006386f7e9279737ab848e3dd90b7b3e0cf73ce49fde570892fc702eb04e850  fungible-v2.pact
+f47bf73860d19ea4851be57b081fdfd7a411419c3c2e6cacd0eaac950e24fa25  fungible-xchain-v1.pact
+9b1c25896f680ebaa5aafb112d4eda7f73af1ee6f28c35b0218d4bde53e667dc  gas-payer-v1.pact
+a4659712e0af1ad50def8d061f2b52f57615408034ab04e4e1e9ce90fb98ee93  SPT.pact

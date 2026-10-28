@@ -1,0 +1,8 @@
+;; DEPLOY FAILS CLOSED — an UPGRADE transaction sent to a chain where trade was never deployed
+;; One refusal per file: a failed load leaves the REPL unusable, so it is the last form.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "an UPGRADE transaction sent to a chain where trade was never deployed")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": true })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(expect-failure "an UPGRADE transaction sent to a chain where trade was never deployed" "Cannot find keyset in database" (load "../modules/trade.pact"))

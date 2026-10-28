@@ -1,0 +1,120 @@
+;; Stored rates: an order
+;; pays the LOWER of the rate it was posted at and the rate in force — a cut reaches it, a rise never
+;; does; floors follow that rate; a signed taker survives a rise and is aborted (no loss) by a cut.
+;; Scenario: a rate change while orders rest. Tokens: tok6 (6 dp) sold, tok2 (2 dp) bought.
+(load "setup.repl")
+(env-exec-config [])
+(env-data
+  { "bob-g":   { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "alice-g": { "keys": ["a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"], "pred": "keys-all" } })
+
+(begin-tx "at 1 %: bob posts A (1000 units each side) and B (1 tok6 for 100 tok2)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "A") 0.001) (PLACE (tn.key tn.BOB "A"))
+                      (n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "B") 1.0) (PLACE (tn.key tn.BOB "B"))] }])
+(create-order "A" tn.BOB (read-keyset "bob-g") n_bro.tok6 0.001 n_bro.tok2 10.0 0.05)
+(create-order "B" tn.BOB (read-keyset "bob-g") n_bro.tok6 1.0 n_bro.tok2 100.0 0.05)
+(commit-tx)
+
+;; ---- rate DOWN to 0.03 %: the floor rises to 3334 units, above order A's whole size
+(begin-tx "rate 0.0003")
+(env-keys ["trade-key" "trade-key-2"])
+(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.set-fee-rate 0.0003)
+(commit-tx)
+(begin-tx "order A: no partial fill, but the closing fill and cancel both work")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys [])
+(expect-failure "A partial refused" "Fill is too small: it is below 3334 smallest units of the sell token" (quote (tn.key tn.BOB "A") 0.0005))
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 10.0)] }])
+(expect "A closing fill: both fees floor to zero, no fee transfer needed, order filled" [0.0 0.0 true]
+  (let ((q (fill-order (tn.key tn.BOB "A") tn.ALICE (read-keyset "alice-g") 0.001 0.05))) [(at 'taker-fee q) (at 'maker-fee q) (at 'closes q)]))
+(expect "A filled" "filled" (at 'status (get-order (tn.key tn.BOB "A"))))
+(rollback-tx)
+(begin-tx "A cancel works at the new rate")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0", "caps": [(CANCEL (tn.key tn.BOB "A"))] }])
+(expect "A refunded in full" 0.0 (cancel-order (tn.key tn.BOB "A") 0.001))
+(rollback-tx)
+(begin-tx "a new order the size of A is refused at the new floor")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "A2") 0.001) (PLACE (tn.key tn.BOB "A2"))] }])
+(expect-failure "posting floor follows the rate" "Order is too small: it sells less than 3334 smallest units of the sell token"
+  (create-order "A2" tn.BOB (read-keyset "bob-g") n_bro.tok6 0.001 n_bro.tok2 10.0 0.05))
+(rollback-tx)
+
+;; ---- rate 0: one-unit pieces, no fee transfers at all
+(begin-tx "rate 0, a one-unit fill of B")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.0)
+(env-keys [])
+(env-events true)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 0.01)] }])
+(expect "RATE0: 1 unit for 1 unit, zero fees" [0.000001 0.01 0.0 0.0]
+  (let ((q (fill-order (tn.key tn.BOB "B") tn.ALICE (read-keyset "alice-g") 0.000001 0.05))) [(at 'taker-net q) (at 'maker-net q) (at 'taker-fee q) (at 'maker-fee q)]))
+(expect "RATE0: exactly two token transfers, none of them zero" [0.01 0.000001]
+  (map (lambda (e) (at 2 (at 'params e))) (filter (lambda (e) (contains "TRANSFER" (at 'name e))) (env-events true))))
+(commit-tx)
+
+;; ---- rate UP to the max: B was posted at 1 % and keeps paying 1 %; an order posted now pays 5 %
+(begin-tx "rate 0.05")
+(env-keys ["trade-key" "trade-key-2"])
+(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.set-fee-rate 0.05)
+(commit-tx)
+(begin-tx "B after the rise")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys [])
+(expect-failure "RISE-KEEPS-FLOOR: a 20-unit piece is still under B's 100-unit floor" "Fill is too small: it is below 100 smallest units of the sell token" (quote (tn.key tn.BOB "B") 0.00002))
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 49.5) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.5)] }])
+(expect "RATE-RISE-NEVER-REACHES-RESTING-ORDER: the maker who posted at 1 % still pays 1 % of 50.00 = 0.50; taker 1 % of 0.5" [0.01 50.0 0.5 0.005]
+  (let ((q (fill-order (tn.key tn.BOB "B") tn.ALICE (read-keyset "alice-g") 0.5 0.05))) [(at 'rate q) (at 'cost q) (at 'maker-fee q) (at 'taker-fee q)]))
+(commit-tx)
+(begin-tx "an order posted at 5 % pays 5 %, floor 20 units")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "C") 1.0) (PLACE (tn.key tn.BOB "C"))] }])
+(create-order "C" tn.BOB (read-keyset "bob-g") n_bro.tok6 1.0 n_bro.tok2 100.0 0.05)
+(expect-failure "MAX: a 20-unit piece whose cost is 1 unit is refused on the cost side" "Fill is too small: its cost is below 20 smallest units of the buy token" (quote (tn.key tn.BOB "C") 0.00002))
+(expect "MAX: 0.5 tok6 for 50.00: maker pays 2.50, taker 0.025" [0.05 2.5 0.025]
+  (let ((q (quote (tn.key tn.BOB "C") 0.5))) [(at 'rate q) (at 'maker-fee q) (at 'taker-fee q)]))
+(rollback-tx)
+
+;; ---- a taker who signed exact caps at B's 1 %: a rise before inclusion changes nothing; a cut aborts
+(begin-tx "SIGNED-QUOTE-SURVIVES-A-RISE: taker signed 1 % caps, governance is at 5 %: the fill lands as signed")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 9.9) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.1)] }])
+(expect "SIGNED-QUOTE-SURVIVES-A-RISE" [0.1 10.0 0.1 0.001]
+  (let ((q (fill-order (tn.key tn.BOB "B") tn.ALICE (read-keyset "alice-g") 0.1 0.05))) [(at 'amount q) (at 'cost q) (at 'maker-fee q) (at 'taker-fee q)]))
+(rollback-tx)
+(begin-tx "taker signed for 1 %, governance CUTS to 0.5 % first: abort, nothing moves (maker-net exceeds the signed cap)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys ["trade-key" "trade-key-2"])
+(set-fee-rate 0.005)
+(env-keys [])
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 9.9) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.1)] }])
+(expect-failure "lower rate -> maker-net exceeds the signed cap" "TRANSFER exceeded" (fill-order (tn.key tn.BOB "B") tn.ALICE (read-keyset "alice-g") 0.1 0.05))
+(rollback-tx)
+
+;; ---- rate 0.0001 (floor 10000 units): B's remainder only closes
+(begin-tx "rate 0.0001")
+(env-keys ["trade-key" "trade-key-2"])
+(n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.set-fee-rate 0.0001)
+(commit-tx)
+(begin-tx "B remainder")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-keys [])
+(expect-failure "9999-unit piece refused" "Fill is too small: it is below 10000 smallest units of the sell token" (quote (tn.key tn.BOB "B") 0.009999))
+(expect-failure "a 0.01 tok6 piece costs 1.00 tok2 = 100 units, below the 10000-unit floor on the buy side" "Fill is too small: its cost is below 10000 smallest units of the buy token" (quote (tn.key tn.BOB "B") 0.01))
+(expect-failure "0.2 tok6 costs 20.00 tok2 = 2000 units: refused; any partial now needs >= 100.00 tok2, more than the 49.99 left -> B only closes" "Fill is too small: its cost is below 10000 smallest units of the buy token" (quote (tn.key tn.BOB "B") 0.2))
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 49.99)] }])
+(expect "the closing fill of the whole remainder works: maker fee floors to 0 at 2 dp, taker fee 0.000049" [true 0.0 0.000049]
+  (let ((q (fill-order (tn.key tn.BOB "B") tn.ALICE (read-keyset "alice-g") 0.499999 0.05))) [(at 'closes q) (at 'maker-fee q) (at 'taker-fee q)]))
+(rollback-tx)

@@ -1,0 +1,16 @@
+;; Probe: open-orders-for must filter on BOTH names. The suite's only other negative ("reverse pair is
+;; empty") has no open order selling coin, so dropping the buy-name filter (or joining the two with `or`) would stay green there.
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "bob: BRO for KDA, BRO for TOK6, TOK6 for KDA")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "a") 1.0) (PLACE (tn.key tn.BOB "a"))
+                      (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "b") 1.0) (PLACE (tn.key tn.BOB "b"))
+                      (n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "c") 1.0) (PLACE (tn.key tn.BOB "c"))] }])
+(create-order "a" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(create-order "b" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 n_bro.tok6 100.0 0.05)
+(create-order "c" tn.BOB (read-keyset "bob-g") n_bro.tok6 1.0 coin 100.0 0.05)
+(expect "OPEN-ORDERS-FOR-EXACT-PAIR: only the BRO->KDA order" ["a"] (map (at 'id) (open-orders-for "n_bro.bro" "coin")))
+(expect "OPEN-ORDERS-FOR-EXACT-PAIR: only the TOK6->KDA order" ["c"] (map (at 'id) (open-orders-for "n_bro.tok6" "coin")))
+(commit-tx)

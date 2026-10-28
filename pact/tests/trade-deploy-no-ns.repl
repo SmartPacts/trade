@@ -1,0 +1,8 @@
+;; DEPLOY FAILS CLOSED — a deploy without the namespace field
+;; One refusal per file: a failed load leaves the REPL unusable, so it is the last form.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "a deploy without the namespace field")
+(env-data { "upgrade": false, "trade-gov": { "keys": ["trade-key" "trade-key-2" "trade-key-3"], "pred": "keys-2" } })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(expect-failure "a deploy without the namespace field" "read-msg failure" (load "../modules/trade.pact"))

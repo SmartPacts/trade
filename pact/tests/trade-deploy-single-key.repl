@@ -1,0 +1,9 @@
+;; DEPLOY FAILS CLOSED — a fresh deploy whose trade-gov is a single key
+;; (a real 64-hex key: a single such key under keys-all is a k: principal — REPL key NAMES are not)
+;; One refusal per file: a failed load leaves the REPL unusable, so it is the last form.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "a fresh deploy whose trade-gov is a single key")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": false, "trade-gov": { "keys": ["c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"], "pred": "keys-all" } })
+(env-keys ["admin-key" "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"])
+(expect-failure "a fresh deploy whose trade-gov is a single key" "trade-gov must be a keys-2 keyset: two different keys must sign" (load "../modules/trade.pact"))

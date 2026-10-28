@@ -1,0 +1,212 @@
+;; match-orders: two resting orders that cross are settled against each other by ANYONE, with no
+;; signature, at the OLDER order's price; the newer order keeps the difference.
+;;   MATCH-WORKED-EXAMPLE    Bob sells 1 BRO for 100 KDA; Alice bids 50 KDA for 0.5 BRO → Alice gets
+;;                           0.5 BRO (less 1%) from Bob for 50 KDA (less 1%).
+;;   MATCH-OLDER-PRICE       the price used is the older order's; MATCH-SURPLUS-RETURNS the newer
+;;                           order's unspent difference goes back to its maker at once.
+;;   MATCH-NEEDS-NOBODY      no signature, no capital, any caller.
+(load "setup.repl")
+(env-exec-config [])
+
+;; ---------------------------------------------------------------- the worked example
+(begin-tx "bob asks first: 1 BRO for 100 KDA")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "ask") 1.0) (PLACE (tn.key tn.BOB "ask"))] }])
+(create-order "ask" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(commit-tx)
+(begin-tx "alice bids later: 50 KDA for 0.5 BRO")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:05:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "bid") 50.0) (PLACE (tn.key tn.ALICE "bid"))] }])
+(create-order "bid" tn.ALICE (read-keyset "alice-g") coin 50.0 n_bro.bro 0.5 0.05)
+(commit-tx)
+
+(begin-tx "MATCH-WORKED-EXAMPLE + MATCH-NEEDS-NOBODY: a stranger matches them, signing nothing")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T10:10:00Z") })
+(env-sigs [])
+(env-events true)
+(expect "the fill of bob's order: 0.5 BRO for 50 KDA, 1% each way"
+  { "rate": 0.01, "amount": 0.5, "cost": 50.0, "taker-net": 0.495, "taker-fee": 0.005, "maker-net": 49.5, "maker-fee": 0.5
+  , "sell-remaining": 0.5, "buy-remaining": 50.0, "closes": false }
+  (match-orders (tn.key tn.BOB "ask") (tn.key tn.ALICE "bid")))
+(expect "ORDER-MATCHED carries both keys, the amounts, no surplus, and alice's order emptied"
+  [[(tn.key tn.BOB "ask") (tn.key tn.ALICE "bid") 0.5 50.0 0.005 0.5 0.0 0.0 0.0]]
+  (tn.params "ORDER-MATCHED" (env-events false)))
+(expect "ORDER-FILLED for bob's order names alice as the taker"
+  [[(tn.key tn.BOB "ask") tn.ALICE 0.5 50.0 0.005 0.5 0.5 50.0]]
+  (tn.params "ORDER-FILLED" (env-events true)))
+(expect "alice received 0.495 BRO" 1000.495 (n_bro.bro.get-balance tn.ALICE))
+(expect "bob received 49.5 KDA" 10049.5 (coin.get-balance tn.BOB))
+(expect "SPT funding received 0.5 KDA" 0.5 (coin.get-balance tn.SPT-FUNDING))
+(expect "the fee account received 0.005 BRO" 0.005 (n_bro.bro.get-balance tn.SINK))
+(expect "bob's order: 0.5 BRO for 50 KDA, open; its escrow holds exactly that"
+  ["open" 0.5 50.0 0.5]
+  [(at 'status (get-order (tn.key tn.BOB "ask"))) (at 'sell-remaining (get-order (tn.key tn.BOB "ask"))) (at 'buy-remaining (get-order (tn.key tn.BOB "ask"))) (n_bro.bro.get-balance (tn.esc tn.BOB "ask"))])
+(expect "alice's order: filled, escrow empty"
+  ["filled" 0.0 0.0 0.0]
+  [(at 'status (get-order (tn.key tn.ALICE "bid"))) (at 'sell-remaining (get-order (tn.key tn.ALICE "bid"))) (at 'buy-remaining (get-order (tn.key tn.ALICE "bid"))) (coin.get-balance (tn.esc tn.ALICE "bid"))])
+(commit-tx)
+
+;; ---------------------------------------------------------------- price improvement to the newer BID
+(begin-tx "alice bids 60 KDA for 0.5 BRO (120 per BRO) against bob's older ask at 100")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T11:00:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "bid2") 60.0) (PLACE (tn.key tn.ALICE "bid2"))] }])
+(create-order "bid2" tn.ALICE (read-keyset "alice-g") coin 60.0 n_bro.bro 0.5 0.05)
+(env-sigs [])
+(env-events true)
+(match-orders (tn.key tn.BOB "ask") (tn.key tn.ALICE "bid2"))
+(expect "MATCH-OLDER-PRICE + MATCH-SURPLUS-RETURNS: cost 50 at bob's price; alice's unspent 10 KDA came back"
+  [[(tn.key tn.BOB "ask") (tn.key tn.ALICE "bid2") 0.5 50.0 0.005 0.5 10.0 0.0 0.0]]
+  (tn.params "ORDER-MATCHED" (env-events true)))
+(expect "alice is out exactly 50 + 50 KDA over the two matches" 9900.0 (coin.get-balance tn.ALICE))
+(expect "her second order is filled and its escrow is empty" ["filled" 0.0] [(at 'status (get-order (tn.key tn.ALICE "bid2"))) (coin.get-balance (tn.esc tn.ALICE "bid2"))])
+(expect "bob's order is filled; he received 99 KDA for his 1 BRO" ["filled" 10099.0] [(at 'status (get-order (tn.key tn.BOB "ask"))) (coin.get-balance tn.BOB)])
+(commit-tx)
+
+;; ---------------------------------------------------------------- the BID is older: its price is used
+(begin-tx "alice bids first: 60 KDA for 0.5 BRO")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T12:00:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "bid3") 60.0) (PLACE (tn.key tn.ALICE "bid3"))] }])
+(create-order "bid3" tn.ALICE (read-keyset "alice-g") coin 60.0 n_bro.bro 0.5 0.05)
+(commit-tx)
+(begin-tx "bob asks later: 1 BRO for 100 KDA — and is matched at alice's 120")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T12:05:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "ask3") 1.0) (PLACE (tn.key tn.BOB "ask3"))] }])
+(create-order "ask3" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(env-sigs [])
+(env-events true)
+(expect-failure "the newer order cannot be named first" "The first order must be the older one: its price is the one used"
+  (match-orders (tn.key tn.BOB "ask3") (tn.key tn.ALICE "bid3")))
+(match-orders (tn.key tn.ALICE "bid3") (tn.key tn.BOB "ask3"))
+;; alice's order (sells 60 KDA for 0.5 BRO) is the one filled: amount 60 KDA, cost 0.5 BRO.
+;; bob's own price for 60 KDA is 0.6 BRO; he gives 0.5, so 0.1 BRO returns to him.
+(expect "MATCH-OLDER-PRICE (bid older): 60 KDA for 0.5 BRO; 0.1 BRO back to bob; his order now 0.4 BRO for 40 KDA"
+  [[(tn.key tn.ALICE "bid3") (tn.key tn.BOB "ask3") 60.0 0.5 0.6 0.005 0.1 0.4 40.0]]
+  (tn.params "ORDER-MATCHED" (env-events true)))
+(expect "bob's order: open, 0.4 for 40, escrow 0.4" ["open" 0.4 40.0 0.4]
+  [(at 'status (get-order (tn.key tn.BOB "ask3"))) (at 'sell-remaining (get-order (tn.key tn.BOB "ask3"))) (at 'buy-remaining (get-order (tn.key tn.BOB "ask3"))) (n_bro.bro.get-balance (tn.esc tn.BOB "ask3"))])
+(expect "alice's order filled, escrow empty" ["filled" 0.0] [(at 'status (get-order (tn.key tn.ALICE "bid3"))) (coin.get-balance (tn.esc tn.ALICE "bid3"))])
+(commit-tx)
+
+;; ---------------------------------------------------------------- refusals
+(begin-tx "orders for the refusals")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T13:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "A") 1.0) (PLACE (tn.key tn.BOB "A"))
+                      (coin.TRANSFER tn.BOB (tn.esc tn.BOB "ownbid") 200.0) (PLACE (tn.key tn.BOB "ownbid"))
+                      (n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "other") 5.0) (PLACE (tn.key tn.BOB "other"))
+                      (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "gone") 1.0) (PLACE (tn.key tn.BOB "gone")) (CANCEL (tn.key tn.BOB "gone"))
+                      (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "tiny") 0.000000009999) (PLACE (tn.key tn.BOB "tiny"))
+                      (n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "cheap") 1.0) (PLACE (tn.key tn.BOB "cheap"))] }])
+(create-order "A" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(create-order "ownbid" tn.BOB (read-keyset "bob-g") coin 200.0 n_bro.bro 1.0 0.05)
+(create-order "other" tn.BOB (read-keyset "bob-g") n_bro.tok6 5.0 coin 100.0 0.05)
+(create-order "gone" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 100.0 0.05)
+(cancel-order (tn.key tn.BOB "gone") 1.0)
+;; 9,999 units of BRO for 990 units of KDA: priced just under the "edge" bid below
+;; 1 BRO for 100,000 units of KDA: 100 units of it cost a single unit of KDA
+(create-order "cheap" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 coin 0.0000001 0.05)
+(create-order "tiny" tn.BOB (read-keyset "bob-g") n_bro.bro 0.000000009999 coin 0.00000000099 0.05)
+(commit-tx)
+(begin-tx "alice's later bids")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T13:05:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "low") 40.0) (PLACE (tn.key tn.ALICE "low"))
+                      (coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "ok") 50.0) (PLACE (tn.key tn.ALICE "ok"))
+                      (coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "edge") 0.000000001) (PLACE (tn.key tn.ALICE "edge"))
+                      (coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "dust") 0.00000001) (PLACE (tn.key tn.ALICE "dust"))
+                      (n_bro.tok6.TRANSFER tn.ALICE (tn.esc tn.ALICE "wrongpay") 100.0) (PLACE (tn.key tn.ALICE "wrongpay"))
+                      (coin.TRANSFER tn.ALICE (tn.esc tn.ALICE "big") 1000.0) (PLACE (tn.key tn.ALICE "big"))] }])
+(create-order "low" tn.ALICE (read-keyset "alice-g") coin 40.0 n_bro.bro 0.5 0.05)
+(create-order "ok" tn.ALICE (read-keyset "alice-g") coin 50.0 n_bro.bro 0.5 0.05)
+;; 1,000 units of KDA for 10,000 units of BRO
+;; buys BRO as bob's ask sells it — but pays in TOK6, which bob never asked for
+(create-order "wrongpay" tn.ALICE (read-keyset "alice-g") n_bro.tok6 100.0 n_bro.bro 0.5 0.05)
+;; a large bid: 1,000 KDA for 10 BRO
+(create-order "big" tn.ALICE (read-keyset "alice-g") coin 1000.0 n_bro.bro 10.0 0.05)
+(create-order "edge" tn.ALICE (read-keyset "alice-g") coin 0.000000001 n_bro.bro 0.00000001 0.05)
+;; 10,000 units of KDA for 100 units of BRO
+(create-order "dust" tn.ALICE (read-keyset "alice-g") coin 0.00000001 n_bro.bro 0.0000000001 0.05)
+(commit-tx)
+
+(begin-tx "match refusals")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T13:10:00Z") })
+(env-sigs [])
+(expect-failure "an order with itself" "An order cannot be matched with itself" (match-orders (tn.key tn.BOB "A") (tn.key tn.BOB "A")))
+(expect-failure "unknown first order" "No value found" (match-orders "nope" (tn.key tn.ALICE "ok")))
+(expect-failure "unknown second order" "No value found" (match-orders (tn.key tn.BOB "A") "nope"))
+(expect-failure "the second order is not open" "Order is not open" (match-orders (tn.key tn.BOB "A") (tn.key tn.ALICE "bid")))
+(expect-failure "the first order is not open" "Order is not open" (match-orders (tn.key tn.BOB "gone") (tn.key tn.ALICE "ok")))
+(expect-failure "two orders selling the same token" "The orders do not trade the same two tokens against each other" (match-orders (tn.key tn.BOB "A") (tn.key tn.BOB "other")))
+(expect-failure "a different pair" "The orders do not trade the same two tokens against each other" (match-orders (tn.key tn.BOB "other") (tn.key tn.ALICE "ok")))
+(expect-failure "MATCH-PAYS-THE-ASKED-TOKEN: the newer order buys what the older sells but pays in another token" "The orders do not trade the same two tokens against each other" (match-orders (tn.key tn.BOB "A") (tn.key tn.ALICE "wrongpay")))
+(expect-failure "both orders are bob's" "Both orders belong to the same account" (match-orders (tn.key tn.BOB "A") (tn.key tn.BOB "ownbid")))
+(expect-failure "the bid is below the ask: 40 KDA for 0.5 BRO against 100 per BRO" "The orders do not cross" (match-orders (tn.key tn.BOB "A") (tn.key tn.ALICE "low")))
+(expect-failure "a non-closing piece whose cost is one unit carries no fee" "Fill is too small: its cost is below 100 smallest units of the buy token" (match-orders (tn.key tn.BOB "cheap") (tn.key tn.ALICE "dust")))
+(expect-failure "it would empty the newer order's escrow while it still wants BRO" "Match would leave the newer order nothing to pay with" (match-orders (tn.key tn.BOB "tiny") (tn.key tn.ALICE "edge")))
+(rollback-tx)
+(begin-tx "an older order's 50-unit remainder cannot nibble a newer order")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T13:10:00Z") })
+;; eve takes all of A but 50 units, leaving a dust remainder that only a closing fill can take
+(env-sigs [{ "key": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5"
+           , "caps": [(coin.TRANSFER tn.EVE tn.BOB 98.999999995050) (coin.TRANSFER tn.EVE tn.SPT-FUNDING 0.99999999995)] }])
+(fill-order (tn.key tn.BOB "A") tn.EVE (read-keyset "eve-g") 0.99999999995 0.05)
+(env-sigs [])
+(expect-failure "EVERY-PARTIAL-PIECE-PAYS-A-FEE, in a match too" "Match is too small: it is below 100 smallest units for the newer order"
+  (match-orders (tn.key tn.BOB "A") (tn.key tn.ALICE "big")))
+(rollback-tx)
+(begin-tx "nothing moved; a crossing pair still matches")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [])
+(expect "A untouched" 1.0 (at 'sell-remaining (get-order (tn.key tn.BOB "A"))))
+(expect "control: A and ok cross and match" 0.5 (at 'sell-remaining (match-orders (tn.key tn.BOB "A") (tn.key tn.ALICE "ok"))))
+(commit-tx)
+
+;; ---------------------------------------------------------------- other decimals
+;; 2-, 6- and 18-decimal tokens: the newer order's own-price amount is rounded at ITS precision.
+(begin-tx "bob sells 10 TOK6 for 3.00 TOK2 (older); alice bids 1.00 TOK2 for 3 TOK6 (newer, 0.3333… per TOK6)")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T14:00:00Z") })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "d6") 10.0) (PLACE (tn.key tn.BOB "d6"))
+                      (n_bro.tok18.TRANSFER tn.BOB (tn.esc tn.BOB "d18") 1.0) (PLACE (tn.key tn.BOB "d18"))] }])
+(create-order "d6" tn.BOB (read-keyset "bob-g") n_bro.tok6 10.0 n_bro.tok2 3.0 0.05)
+(create-order "d18" tn.BOB (read-keyset "bob-g") n_bro.tok18 1.0 n_bro.tok6 7.0 0.05)
+(commit-tx)
+(begin-tx "the newer orders, and the matches")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-chain-data { "block-time": (time "2026-10-02T14:05:00Z") })
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE (tn.esc tn.ALICE "b2") 2.0) (PLACE (tn.key tn.ALICE "b2"))
+                      (n_bro.tok6.TRANSFER tn.ALICE (tn.esc tn.ALICE "b6") 5.0) (PLACE (tn.key tn.ALICE "b6"))] }])
+;; 2.00 TOK2 for 6 TOK6: 0.3333… per TOK6, above bob's 0.30
+(create-order "b2" tn.ALICE (read-keyset "alice-g") n_bro.tok2 2.0 n_bro.tok6 6.0 0.05)
+;; 5 TOK6 for 0.6 TOK18: 8.33… TOK6 per TOK18, above bob's 7
+(create-order "b6" tn.ALICE (read-keyset "alice-g") n_bro.tok6 5.0 n_bro.tok18 0.6 0.05)
+(env-sigs [])
+(let ((b2-before (n_bro.tok2.get-balance tn.ALICE)) (b6-before (n_bro.tok6.get-balance tn.ALICE)))
+  ;; 6 TOK6 at bob's price cost 1.80 TOK2; alice's order closes (it wanted 6), so her other 0.20 returns
+  (expect "MATCH-MIXED-DECIMALS 6/2: cost 1.80, fees 0.06 TOK6 and 0.01 TOK2" [1.8 0.06 0.01]
+    (let ((q (match-orders (tn.key tn.BOB "d6") (tn.key tn.ALICE "b2")))) [(at 'cost q) (at 'taker-fee q) (at 'maker-fee q)]))
+  (expect "alice's unspent 0.20 TOK2 came back; her escrow is empty; she holds 5.94 more TOK6"
+    [0.2 0.0 5.94] [(- (n_bro.tok2.get-balance tn.ALICE) b2-before) (n_bro.tok2.get-balance (tn.esc tn.ALICE "b2")) (- (n_bro.tok6.get-balance tn.ALICE) b6-before)]))
+(expect "bob's d6: 4 TOK6 for 1.20 TOK2 left, escrow 4" [4.0 1.2 4.0]
+  [(at 'sell-remaining (get-order (tn.key tn.BOB "d6"))) (at 'buy-remaining (get-order (tn.key tn.BOB "d6"))) (n_bro.tok6.get-balance (tn.esc tn.BOB "d6"))])
+;; 0.6 TOK18 at bob's price cost 4.2 TOK6; alice's order closes, 0.8 TOK6 returns
+(expect "MATCH-MIXED-DECIMALS 18/6: cost 4.2 TOK6 for 0.6 TOK18" 4.2 (at 'cost (match-orders (tn.key tn.BOB "d18") (tn.key tn.ALICE "b6"))))
+(expect "alice's b6 escrow is empty; bob's d18 holds 0.4 TOK18" [0.0 0.4] [(n_bro.tok6.get-balance (tn.esc tn.ALICE "b6")) (n_bro.tok18.get-balance (tn.esc tn.BOB "d18"))])
+(commit-tx)

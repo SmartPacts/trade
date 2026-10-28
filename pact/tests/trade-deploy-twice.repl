@@ -1,0 +1,8 @@
+;; DEPLOY FAILS CLOSED — the fresh-deploy transaction sent to a chain that already has trade aborts
+;; at its table creation (on chain the whole transaction reverts, so the module is not replaced).
+(load "setup.repl")
+(env-exec-config [])
+(begin-tx "fresh-deploy transaction on a deployed chain")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": false, "trade-gov": { "keys": ["trade-key" "trade-key-2" "trade-key-3"], "pred": "keys-2" } })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(expect-failure "second fresh deploy" "already exists" (load "../modules/trade.pact"))

@@ -1,0 +1,15 @@
+;; DEPLOY FAILS CLOSED — an UPGRADE onto a chain whose earlier build never created the settings table
+;; (the footer reads fee-rate, so a missing table aborts the upgrade instead of breaking every fill).
+;; One refusal per file: a failed load leaves the REPL unusable, so it is the last form.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "an earlier build that creates only the orders table")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": false
+          , "trade-gov": { "keys": ["admin-key" "trade-key" "third-key"], "pred": "keys-2" } })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(load "fixtures/trade-nosettings.pact")
+(commit-tx)
+(begin-tx "an UPGRADE over it")
+(env-data { "ns": "n_48867b242317a0216a67f8c7ca26696b5878e0e3", "upgrade": true })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(expect-failure "an UPGRADE onto a build without the settings table" "trade_settings not found" (load "../modules/trade.pact"))

@@ -1,0 +1,15 @@
+;; Catches a namespace hardcoded to the mainnet one: trade-deploy-no-ns.repl pins only "read-msg failure",
+;; which the header's later (read-msg 'ns) also raises. Deploying into another namespace must land THERE.
+(load "world.repl")
+(env-exec-config [])
+(begin-tx "another namespace")
+(env-data { "t": { "keys": ["admin-key"], "pred": "keys-all" } })
+(env-keys ["admin-key"])
+(define-namespace "n_other" (read-keyset "t") (read-keyset "t"))
+(commit-tx)
+(begin-tx "deploy into n_other")
+(env-data { "ns": "n_other", "upgrade": false, "trade-gov": { "keys": ["trade-key" "trade-key-2" "trade-key-3"], "pred": "keys-2" } })
+(env-keys ["admin-key" "trade-key" "trade-key-2"])
+(load "../modules/trade.pact")
+(expect "DEPLOY-USES-THE-NS-FIELD: the module is n_other.trade, governed by n_other.trade-gov" ["n_other.trade" "n_other.trade-gov"] [(at 'name (describe-module "n_other.trade")) n_other.trade.GOV-KS])
+(commit-tx)

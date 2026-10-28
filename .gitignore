@@ -1,0 +1,7 @@
+node_modules/
+*.log
+__pycache__/
+*.pyc
+.DS_Store
+# devnet throwaway keys written by the examples
+examples/.keys.json

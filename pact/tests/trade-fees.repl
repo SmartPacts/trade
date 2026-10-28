@@ -1,0 +1,128 @@
+;; THE 1% PROMISE, ACROSS PRECISIONS. Every earlier test token had 12 decimals, which hid a fee
+;; that rounded up to 50% of a fill on a 2-decimal token. These tests use 2-, 6-, 12- and
+;; 18-decimal tokens and pin three properties:
+;;   FEE-NEVER-ABOVE-RATE  no fill ever charges more than 1% of either leg (the fee rounds down)
+;;   FEE-NEVER-NOTHING     every fill an order allows carries a fee of at least one unit on each
+;;                         leg at the order's minimum (the 100-unit floor refuses smaller orders)
+;;   MAKER-GETS-99         over a fully fragmented order the maker receives >= 99% of the posted price
+(load "setup.repl")
+(env-exec-config [])
+
+;; ---- the order that broke the old fee rounding: 20 BRO for 0.40 of a 2-decimal token -------------
+(begin-tx "the broken order is refused at creation: it asks 40 units of the 2-decimal token")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "f1") 20.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "f1"))] }])
+(expect-failure "0.40 TOK2 is 40 units: below the 100-unit floor"
+  "Order is too small: it asks less than 100 smallest units of the buy token"
+  (create-order "f1" tn.BOB (read-keyset "bob-g") n_bro.bro 20.0 n_bro.tok2 0.40 0.05))
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok2.TRANSFER tn.BOB (tn.esc tn.BOB "f1") 0.99)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "f1"))] }])
+(expect-failure "a 2-decimal SELL token: an order of 0.99 is refused too"
+  "Order is too small: it sells less than 100 smallest units of the sell token"
+  (create-order "f1" tn.BOB (read-keyset "bob-g") n_bro.tok2 0.99 coin 50.0 0.05))
+(rollback-tx)
+
+;; ---- FEE-NEVER-ABOVE-RATE + MAKER-GETS-99: a 2-decimal buy token, fully fragmented ------------
+;; 2000 TOK6 for 41.00 TOK2, filled in 100-TOK6 pieces (each costs 2.05 TOK2 = 205 units). Twenty fills.
+(begin-tx "open fr")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "fr") 2000.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "fr"))] }])
+(create-order "fr" tn.BOB (read-keyset "bob-g") n_bro.tok6 2000.0 n_bro.tok2 41.0 0.05)
+(expect "bob's TOK2 before" 100000.0 (n_bro.tok2.get-balance tn.BOB))
+(commit-tx)
+
+(begin-tx "twenty quotes, each checked")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(let ((q (quote (tn.key tn.BOB "fr") 100.0)))
+  (expect "one fill: cost 2.05, fee 0.02 (floor of 0.0205), maker 2.03; 1 TOK6 fee, taker 99"
+    [2.05 0.02 2.03 1.0 99.0] [(at 'cost q) (at 'maker-fee q) (at 'maker-net q) (at 'taker-fee q) (at 'taker-net q)])
+  (expect "FEE-NEVER-ABOVE-RATE: maker fee <= 1% of the cost" true (<= (at 'maker-fee q) (* 0.01 (at 'cost q))))
+  (expect "FEE-NEVER-ABOVE-RATE: taker fee <= 1% of the amount" true (<= (at 'taker-fee q) (* 0.01 (at 'amount q))))
+  (expect "FEE-NEVER-NOTHING: both fees are at least one unit" true (and (>= (at 'maker-fee q) 0.01) (>= (at 'taker-fee q) 0.000001))))
+(commit-tx)
+
+;; twenty separate transactions, as twenty takers would send them
+(begin-tx "fill 1")  (use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade) (env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 2.03) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.02)] }]) (fill-order (tn.key tn.BOB "fr") tn.ALICE (read-keyset "alice-g") 100.0 0.05) (commit-tx)
+(begin-tx "fill 2")  (use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade) (env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 2.03) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.02)] }]) (fill-order (tn.key tn.BOB "fr") tn.ALICE (read-keyset "alice-g") 100.0 0.05) (commit-tx)
+(begin-tx "fill 3")  (use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade) (env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 2.03) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.02)] }]) (fill-order (tn.key tn.BOB "fr") tn.ALICE (read-keyset "alice-g") 100.0 0.05) (commit-tx)
+(begin-tx "fill 4")  (use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade) (env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 2.03) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.02)] }]) (fill-order (tn.key tn.BOB "fr") tn.ALICE (read-keyset "alice-g") 100.0 0.05) (commit-tx)
+(begin-tx "fill 5")  (use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade) (env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 2.03) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.02)] }]) (fill-order (tn.key tn.BOB "fr") tn.ALICE (read-keyset "alice-g") 100.0 0.05) (commit-tx)
+
+;; after five fills of 100: 1500 TOK6 left for 30.75 TOK2 — the price has not moved against the maker
+(begin-tx "after five fills")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(let ((o (get-order (tn.key tn.BOB "fr"))))
+  (expect "1500 for 30.75" [1500.0 30.75] [(at 'sell-remaining o) (at 'buy-remaining o)]))
+(expect "bob has received 5 x 2.03" 100010.15 (n_bro.tok2.get-balance tn.BOB))
+(expect "the sink has received 5 x 0.02 TOK2" 0.10 (n_bro.tok2.get-balance tn.SINK))
+;; the rest in one closing fill: cost 30.75, fee floor(0.3075) = 0.30, maker 30.45
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1", "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 30.45) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.30)] }])
+(let ((q (fill-order (tn.key tn.BOB "fr") tn.ALICE (read-keyset "alice-g") 1500.0 0.05)))
+  (expect "closing fill: cost 30.75, fee 0.30, maker 30.45" [30.75 0.30 30.45 true] [(at 'cost q) (at 'maker-fee q) (at 'maker-net q) (at 'closes q)]))
+;; MAKER-GETS-99: posted 41.00; maker received 10.15 + 30.45 = 40.60 = 99.02%; sink 0.40 = 0.98%
+(expect "MAKER-GETS-99: bob received 40.60 of the 41.00 posted" 100040.60 (n_bro.tok2.get-balance tn.BOB))
+(expect "the fee account took 0.40 of 41.00 — under 1%, never over" 0.40 (n_bro.tok2.get-balance tn.SINK))
+(expect "MAKER-GETS-99 as an inequality, from the ledger" true (>= (- (n_bro.tok2.get-balance tn.BOB) 100000.0) (* 0.99 41.0)))
+(expect "nothing lost: maker + fee account = posted, from the ledger" 41.0 (+ (- (n_bro.tok2.get-balance tn.BOB) 100000.0) (n_bro.tok2.get-balance tn.SINK)))
+(expect "filled" "filled" (at 'status (get-order (tn.key tn.BOB "fr"))))
+(commit-tx)
+
+;; ---- 18 decimals against 6: precision is per token, never a fixed 12 ---------------------------
+(begin-tx "18-decimal sell token, 6-decimal buy token")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok18.TRANSFER tn.BOB (tn.esc tn.BOB "d18") 1.000000000000000003)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "d18"))] }])
+(create-order "d18" tn.BOB (read-keyset "bob-g") n_bro.tok18 1.000000000000000003 n_bro.tok6 7.000001 0.05)
+(expect "precisions pinned 18 and 6" [18 6]
+  (let ((o (get-order (tn.key tn.BOB "d18")))) [(at 'sell-precision o) (at 'buy-precision o)]))
+(let ((q (quote (tn.key tn.BOB "d18") 0.333333333333333333)))
+  ;; cost = ceiling(0.333333333333333333 x 7.000001 / 1.000000000000000003, 6) = 2.333334
+  (expect "cost rounds UP to the 6-decimal token" 2.333334 (at 'cost q))
+  (expect "maker fee floors at 6 decimals: 0.023333" 0.023333 (at 'maker-fee q))
+  (expect "taker fee floors at 18 decimals" 0.003333333333333333 (at 'taker-fee q))
+  (expect "FEE-NEVER-ABOVE-RATE on both legs" true
+    (and (<= (at 'maker-fee q) (* 0.01 (at 'cost q))) (<= (at 'taker-fee q) (* 0.01 (at 'amount q))))))
+(expect-failure "an amount finer than 18 decimals is refused" "Take exceeds the sell token precision"
+  (quote (tn.key tn.BOB "d18") 0.3333333333333333333))
+(commit-tx)
+
+;; ---- a 6-decimal stablecoin-like token against KDA --------------------------------------------
+(begin-tx "6-decimal token for KDA")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "u6") 25.0)
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "u6"))
+                      (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE (tn.key tn.BOB "u6b"))] }])
+(create-order "u6" tn.BOB (read-keyset "bob-g") n_bro.tok6 25.0 coin 2500.0 0.05)
+(let ((q (quote (tn.key tn.BOB "u6") 0.0001)))
+  ;; the smallest allowed fill: 0.0001 TOK6 = 100 units; fee floor(0.000001) = 1 unit
+  (expect "at the 100-unit minimum the taker fee is exactly one unit" 0.000001 (at 'taker-fee q))
+  (expect "cost 0.01 KDA, maker fee 0.0001 KDA" [0.01 0.0001] [(at 'cost q) (at 'maker-fee q)]))
+(expect-failure "0.000099 TOK6 (99 units) is not a fill"
+  "Fill is too small: it is below 100 smallest units of the sell token"
+  (quote (tn.key tn.BOB "u6") 0.000099))
+(rollback-tx)
+
+;; An order shaped to dodge the fee: 0.01 TOK6 for 99.01 TOK2, filled in pieces
+;; of 0.0001 TOK6 whose true cost is 0.9901 TOK2 — under 100 units, so its 1 % fee rounds to nothing.
+;; The order itself is fine; every such PIECE is refused, and a piece that carries a fee is taken.
+(begin-tx "a piece worth under 100 units of the buy token is refused")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.tok6.TRANSFER tn.BOB (tn.esc tn.BOB "dodge") 0.01) (PLACE (tn.key tn.BOB "dodge"))] }])
+(create-order "dodge" tn.BOB (read-keyset "bob-g") n_bro.tok6 0.01 n_bro.tok2 99.01 0.05)
+(expect "the first such piece rounds UP to exactly 1.00 and pays a fee" [1.0 0.01]
+  [(at 'cost (quote (tn.key tn.BOB "dodge") 0.0001)) (at 'maker-fee (quote (tn.key tn.BOB "dodge") 0.0001))])
+(env-sigs [{ "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+           , "caps": [(n_bro.tok2.TRANSFER tn.ALICE tn.BOB 0.99) (n_bro.tok2.TRANSFER tn.ALICE tn.SINK 0.01)] }])
+(fill-order (tn.key tn.BOB "dodge") tn.ALICE (read-keyset "alice-g") 0.0001 0.05)
+(expect-failure "EVERY-PARTIAL-FILL-PAYS-A-FEE: the next such piece would cost 0.99" "Fill is too small: its cost is below 100 smallest units of the buy token"
+  (quote (tn.key tn.BOB "dodge") 0.0001))
+(expect "a slightly larger piece is taken, with a fee" 0.01 (at 'maker-fee (quote (tn.key tn.BOB "dodge") 0.000102)))
+(rollback-tx)

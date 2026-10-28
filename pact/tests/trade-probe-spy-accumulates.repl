@@ -1,0 +1,76 @@
+
+;; Probe: the spy of trade-spy-buy-token.repl overwrites its sighting on every call, so a
+;; buy-token call made INSIDE PLACE would be hidden by the later call made outside it. This sensor accumulates.
+;; What a hostile BUY token sees while create-order opens the
+;; maker's receiving account — none of our capabilities, and the maker's guard does not pass there.
+;; That is, what a hostile BUY token sees while ensure-maker-account calls it. spy.details always fails
+;; (so create-account runs); spy.create-account records which trade capabilities are in scope and whether
+;; the maker's guard passes there, or (mode "reenter") tries to write trade's settings through set-fee-rate.
+(load "setup.repl")
+(env-exec-config [])
+(env-data
+  { "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" }
+  , "aud": { "keys": ["aud-key"], "pred": "keys-all" } })
+(begin-tx "spy token")
+(env-keys ["aud-key"])
+(define-namespace "aud" (read-keyset "aud") (read-keyset "aud"))
+(namespace "aud")
+(define-keyset "aud.g" (read-keyset "aud"))
+(module spy "aud.g"
+  (implements fungible-v2)
+  (defschema seen place:bool escrow:bool maker-guard-passes:bool)
+  (deftable sightings:{seen})
+  (defschema account balance:decimal guard:guard)
+  (deftable ledger:{account})
+  (defcap TRANSFER:bool (sender:string receiver:string amount:decimal) @managed amount TRANSFER-mgr true)
+  (defun TRANSFER-mgr:decimal (managed:decimal requested:decimal) (- managed requested))
+  (defun transfer:string (sender:string receiver:string amount:decimal) (format "no" []))
+  (defun transfer-create:string (sender:string receiver:string receiver-guard:guard amount:decimal) (format "no" []))
+  (defun get-balance:decimal (account:string) 0.0)
+  (defun details:object{fungible-v2.account-details} (account:string) (enforce false "spy: details always fails"))
+  (defun precision:integer () 12)
+  (defun enforce-unit:bool (amount:decimal) true)
+  (defun create-account:string (account:string guard:guard)
+    (let ((k (read-msg "spy-key")))
+      (if (= (read-msg "spy-mode") "reenter")
+        (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.set-fee-rate 0.05)
+        (with-default-read sightings account { "place": false, "escrow": false, "maker-guard-passes": false }
+          { "place" := p0, "escrow" := e0, "maker-guard-passes" := g0 }
+          (write sightings account
+            { "place": (or p0 (try false (require-capability (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.PLACE k))))
+            , "escrow": (or e0 (try false (require-capability (n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade.ESCROW k))))
+            , "maker-guard-passes": (or g0 (try false (enforce-guard guard))) })))))
+  (defun rotate:string (account:string new-guard:guard) (format "no" []))
+  (defun seen-at:object (account:string) (read sightings account))
+  (defpact transfer-crosschain:string (sender:string receiver:string receiver-guard:guard target-chain:string amount:decimal)
+    (step (format "x" []))))
+(create-table sightings)
+(create-table ledger)
+(commit-tx)
+
+(begin-tx "every buy-token call at posting, accumulated")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-data { "spy-key": (tn.key tn.BOB "S"), "spy-mode": "record", "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" } })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(n_bro.bro.TRANSFER tn.BOB (tn.esc tn.BOB "S") 1.0) (PLACE (tn.key tn.BOB "S"))] }])
+(create-order "S" tn.BOB (read-keyset "bob-g") n_bro.bro 1.0 aud.spy 10.0 0.05)
+(expect "NO-CAP-IN-SCOPE-AT-ANY-BUY-TOKEN-CALL (accumulated)"
+  [{ "place": false, "escrow": false, "maker-guard-passes": false } { "place": false, "escrow": false, "maker-guard-passes": false }]
+  [(aud.spy.seen-at tn.BOB) (aud.spy.seen-at tn.SINK)])
+(rollback-tx)
+
+;; The same sensor as the SELL token: create-order now reads and may open the maker's account in the
+;; sell token too. Every sell-token call made before the deposit must see
+;; none of our capabilities and must not see the maker's scoped signature pass.
+(begin-tx "every sell-token call before the deposit, accumulated")
+(use n_48867b242317a0216a67f8c7ca26696b5878e0e3.trade)
+(env-data { "spy-key": (tn.key tn.BOB "T"), "spy-mode": "record", "bob-g": { "keys": ["b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"], "pred": "keys-all" } })
+(env-sigs [{ "key": "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0"
+           , "caps": [(aud.spy.TRANSFER tn.BOB (tn.esc tn.BOB "T") 1.0) (PLACE (tn.key tn.BOB "T"))] }])
+(expect-failure "the sensor credits nothing, so the order is refused at the measured deposit — after its account calls ran"
+  "Escrow received 0.0 of 1.0"
+  (create-order "T" tn.BOB (read-keyset "bob-g") aud.spy 1.0 n_bro.bro 10.0 0.05))
+(expect "NO-CAP-IN-SCOPE-AT-ANY-SELL-TOKEN-ACCOUNT-CALL (accumulated): the maker's account and the fee account were both called"
+  [{ "place": false, "escrow": false, "maker-guard-passes": false } { "place": false, "escrow": false, "maker-guard-passes": false }]
+  [(aud.spy.seen-at tn.BOB) (aud.spy.seen-at tn.SINK)])
+(rollback-tx)
